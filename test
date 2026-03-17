@@ -1,0 +1,40 @@
+sudo nano /etc/systemd/system/sonarqube.service
+
+Contenido:
+
+[Unit]
+Description=SonarQube service
+After=network.target
+
+[Service]
+Type=forking
+
+User=sonar
+Group=sonar
+
+ExecStart=/opt/sonarqube/sonarqube-26.3.0.120487/bin/linux-x86-64/sonar.sh start
+ExecStop=/opt/sonarqube/sonarqube-26.3.0.120487/bin/linux-x86-64/sonar.sh stop
+
+Restart=always
+LimitNOFILE=131072
+LimitNPROC=8192
+
+TimeoutStartSec=5
+SuccessExitStatus=143
+
+[Install]
+WantedBy=multi-user.target
+2️⃣ Recargar systemd
+sudo systemctl daemon-reload
+3️⃣ Habilitar arranque automático
+sudo systemctl enable sonarqube
+4️⃣ Iniciar el servicio
+sudo systemctl start sonarqube
+5️⃣ Verificar estado
+sudo systemctl status sonarqube
+
+Deberías ver algo como:
+
+Active: active (running)
+6️⃣ Ver logs desde systemd
+journalctl -u sonarqube -f
