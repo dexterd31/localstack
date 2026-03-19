@@ -1,41 +1,13 @@
 properties([
     buildDiscarder(logRotator(numToKeepStr: log_rotator)),
-    disableConcurrentBuilds(),
-    [
-        $class: 'EnvInjectJobProperty',
-        info: [
-            loadFilesFromMaster: false,
-            propertiesContent: job_environments ?: '',
-            keepBuildVariables: true,
-            keepJenkinsSystemVariables: true
-        ],
-        on: true
-    ],
-    parameters([
-        string(
-            name: 'JENKINS_API_URL',
-            description: 'URL completa de la API de Jenkins que devuelve los builds',
-            defaultValue: dora.jenkins_api_url,
-            trim: true
-        ),
-        credentials(
-            name: 'JENKINS_API_CREDS',
-            description: 'Credenciales (username + token) para acceder a la API de Jenkins',
-            defaultValue: '',
-            required: true
-        )
-    ])
+    disableConcurrentBuilds()
 ])
 
 timeout(time: execution.time, unit: execution.units) {
 
     stage('DORA - Fetch Metrics') {
-        def metrics = doraFetchLeadTime(
-            params.JENKINS_API_URL,
-            params.JENKINS_API_CREDS
-        )
+        def metrics = doraFetchLeadTime()
 
-        // Guardamos para siguiente stage
         env.DORA_METRICS_JSON = groovy.json.JsonOutput.toJson(metrics)
     }
 

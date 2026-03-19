@@ -1,4 +1,4 @@
-package org.jenkinsci.plugins.dora
+package jte.dora.constants
 
 class DoraMetrics implements Serializable {
 

@@ -4,6 +4,7 @@ jte {
 }
 
 libraries {
+    dora
     jenkins {
         agent_label = 'linux'
         clean_job_workspace = true
@@ -11,7 +12,7 @@ libraries {
 }
 
 dora {
-    html_template_url = 'https://'
+    html_template_url = 'https://TU_HTML_TEMPLATE.html'
 }
 
 keywords {
@@ -20,12 +21,7 @@ keywords {
         units = 'MINUTES'
     }
 
-    jenkins_api_url = 'https://'
+    job_environments = ''
 
-    job_environments = [
-        // Definir ambientes aquí si aplica
-    ]
-
-    // No necesitamos variables aquí; la credencial se pasa como parámetro.
     log_rotator = '30'
 }

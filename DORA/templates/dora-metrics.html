@@ -19,7 +19,6 @@
             padding: 1.5rem;
             border-radius: 10px;
             box-shadow: 0 2px 6px rgba(0,0,0,0.1);
-            margin-bottom: 1.5rem;
         }
 
         table {
@@ -30,7 +29,6 @@
         th, td {
             border: 1px solid #ddd;
             padding: 0.7rem;
-            text-align: left;
         }
 
         th {
@@ -41,12 +39,6 @@
             font-weight: bold;
             color: #27ae60;
         }
-
-        .footer {
-            margin-top: 2rem;
-            font-size: 0.9rem;
-            color: #555;
-        }
     </style>
 </head>
 <body>
@@ -54,8 +46,6 @@
     <h1>📊 DORA Metrics - {{JOB_NAME}}</h1>
 
     <div class="card">
-        <h2>Lead Time for Changes</h2>
-
         <table>
             <tr>
                 <th>Métrica</th>
@@ -76,9 +66,7 @@
         </table>
     </div>
 
-    <div class="footer">
-        Generado el {{GENERATED_AT}} por Jenkins job <strong>{{JOB_NAME}}</strong>
-    </div>
+    <p>Generado el {{GENERATED_AT}}</p>
 
 </body>
 </html>

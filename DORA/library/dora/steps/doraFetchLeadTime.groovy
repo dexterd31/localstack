@@ -1,9 +1,15 @@
-def call(String apiUrl, String credentialsId) {
+def call() {
 
-    def metrics = new org.jenkinsci.plugins.dora.DoraMetrics()
-        .fetchLeadTime(apiUrl, credentialsId)
+    def commitTime = sh(
+        script: "git log -1 --format=%ct",
+        returnStdout: true
+    ).trim().toLong() * 1000
 
-    // 🔥 Agregamos el nombre del job
+    def deployTime = System.currentTimeMillis()
+
+    def metrics = new jte.dora.constants.DoraMetrics()
+        .calculateLeadTime(commitTime, deployTime)
+
     metrics.jobName = env.JOB_NAME
 
     return metrics
