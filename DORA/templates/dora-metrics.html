@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>DORA Metrics - {{JOB_NAME}}</title>
+    <style>
+        body {
+            font-family: Arial, Helvetica, sans-serif;
+            margin: 2rem;
+        }
+        table {
+            border-collapse: collapse;
+            width: 100%;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 0.5rem;
+            text-align: left;
+        }
+        th {
+            background: #f2f2f2;
+        }
+    </style>
+</head>
+<body>
+    <h1>DORA Metrics - {{JOB_NAME}}</h1>
+
+    <table>
+        <tr>
+            <th>Métrica</th>
+            <th>Valor</th>
+        </tr>
+        <tr>
+            <td>Lead Time for Changes</td>
+            <td>{{LEAD_TIME}}</td>
+        </tr>
+        <!-- Futuras métricas pueden añadirse aquí -->
+    </table>
+
+    <p>
+        Generado el {{GENERATED_AT}} por Jenkins job <strong>{{JOB_NAME}}</strong>
+    </p>
+</body>
+</html>
