@@ -3,30 +3,33 @@ properties([
     disableConcurrentBuilds()
 ])
 
-timeout(time: execution.time, unit: execution.units) {
+node {
 
-    stage('DORA - Fetch Metrics') {
-        def metrics = doraFetchLeadTime()
+    timeout(time: execution.time, unit: execution.units) {
 
-        env.DORA_METRICS_JSON = groovy.json.JsonOutput.toJson(metrics)
-    }
+        stage('DORA - Fetch Metrics') {
+            def metrics = doraFetchLeadTime()
 
-    stage('DORA - Render HTML') {
+            env.DORA_METRICS_JSON = groovy.json.JsonOutput.toJson(metrics)
+        }
 
-        def metrics = new groovy.json.JsonSlurper()
-            .parseText(env.DORA_METRICS_JSON)
+        stage('DORA - Render HTML') {
 
-        def htmlContent = doraRenderHtml(
-            dora.html_template_url,
-            metrics
-        )
+            def metrics = new groovy.json.JsonSlurper()
+                .parseText(env.DORA_METRICS_JSON)
 
-        def fileName = "dora-metrics-${env.BUILD_NUMBER}.html"
+            def htmlContent = doraRenderHtml(
+                dora.html_template_url,
+                metrics
+            )
 
-        writeFile file: fileName, text: htmlContent
+            def fileName = "dora-metrics-${env.BUILD_NUMBER}.html"
 
-        archiveArtifacts artifacts: fileName, fingerprint: true
+            writeFile file: fileName, text: htmlContent
 
-        echo "📄 Métrica DORA (Lead Time) guardada en ${fileName}"
+            archiveArtifacts artifacts: fileName, fingerprint: true
+
+            echo "📄 Métrica DORA (Lead Time) guardada en ${fileName}"
+        }
     }
 }
