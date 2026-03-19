@@ -7,38 +7,78 @@
         body {
             font-family: Arial, Helvetica, sans-serif;
             margin: 2rem;
+            background: #f9fafb;
         }
+
+        h1 {
+            color: #2c3e50;
+        }
+
+        .card {
+            background: #ffffff;
+            padding: 1.5rem;
+            border-radius: 10px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+            margin-bottom: 1.5rem;
+        }
+
         table {
             border-collapse: collapse;
             width: 100%;
         }
+
         th, td {
             border: 1px solid #ddd;
-            padding: 0.5rem;
+            padding: 0.7rem;
             text-align: left;
         }
+
         th {
             background: #f2f2f2;
+        }
+
+        .value {
+            font-weight: bold;
+            color: #27ae60;
+        }
+
+        .footer {
+            margin-top: 2rem;
+            font-size: 0.9rem;
+            color: #555;
         }
     </style>
 </head>
 <body>
-    <h1>DORA Metrics - {{JOB_NAME}}</h1>
 
-    <table>
-        <tr>
-            <th>Métrica</th>
-            <th>Valor</th>
-        </tr>
-        <tr>
-            <td>Lead Time for Changes</td>
-            <td>{{LEAD_TIME}}</td>
-        </tr>
-        <!-- Futuras métricas pueden añadirse aquí -->
-    </table>
+    <h1>📊 DORA Metrics - {{JOB_NAME}}</h1>
 
-    <p>
+    <div class="card">
+        <h2>Lead Time for Changes</h2>
+
+        <table>
+            <tr>
+                <th>Métrica</th>
+                <th>Valor</th>
+            </tr>
+            <tr>
+                <td>Lead Time</td>
+                <td class="value">{{LEAD_TIME}}</td>
+            </tr>
+            <tr>
+                <td>Commit Time</td>
+                <td>{{COMMIT_TIME}}</td>
+            </tr>
+            <tr>
+                <td>Deploy Time</td>
+                <td>{{DEPLOY_TIME}}</td>
+            </tr>
+        </table>
+    </div>
+
+    <div class="footer">
         Generado el {{GENERATED_AT}} por Jenkins job <strong>{{JOB_NAME}}</strong>
-    </p>
+    </div>
+
 </body>
 </html>

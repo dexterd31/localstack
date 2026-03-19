@@ -5,7 +5,7 @@ properties([
         $class: 'EnvInjectJobProperty',
         info: [
             loadFilesFromMaster: false,
-            propertiesContent: job_environments,
+            propertiesContent: job_environments ?: '',
             keepBuildVariables: true,
             keepJenkinsSystemVariables: true
         ],
@@ -27,24 +27,34 @@ properties([
     ])
 ])
 
-// Timeout (valor provisto por el config)
 timeout(time: execution.time, unit: execution.units) {
 
-    def metrics = doraFetchLeadTime(
-        params.JENKINS_API_URL,
-        params.JENKINS_API_CREDS
-    )
+    stage('DORA - Fetch Metrics') {
+        def metrics = doraFetchLeadTime(
+            params.JENKINS_API_URL,
+            params.JENKINS_API_CREDS
+        )
 
-    def htmlContent = doraRenderHtml(
-        dora.html_template_url,
-        metrics
-    )
+        // Guardamos para siguiente stage
+        env.DORA_METRICS_JSON = groovy.json.JsonOutput.toJson(metrics)
+    }
 
-    def fileName = "dora-metrics-${env.BUILD_NUMBER}.html"
+    stage('DORA - Render HTML') {
 
-    writeFile file: fileName, text: htmlContent
+        def metrics = new groovy.json.JsonSlurper()
+            .parseText(env.DORA_METRICS_JSON)
 
-    archiveArtifacts artifacts: fileName, fingerprint: true
+        def htmlContent = doraRenderHtml(
+            dora.html_template_url,
+            metrics
+        )
 
-    echo "Métrica DORA (Lead Time) obtenida y guardada en ${fileName}"
+        def fileName = "dora-metrics-${env.BUILD_NUMBER}.html"
+
+        writeFile file: fileName, text: htmlContent
+
+        archiveArtifacts artifacts: fileName, fingerprint: true
+
+        echo "📄 Métrica DORA (Lead Time) guardada en ${fileName}"
+    }
 }
