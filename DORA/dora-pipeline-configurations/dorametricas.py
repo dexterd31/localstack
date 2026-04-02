@@ -9,7 +9,7 @@ from requests.auth import HTTPBasicAuth
 
 
 # =========================================================
-# 🔧 CONFIGURACIÓN
+# 🔧 CONFIG
 # =========================================================
 JENKINS_URL = "https://alm-latam-assurance.dev.echonet/jenkins"
 JENKINS_USER = "j13399"
@@ -50,7 +50,6 @@ AUTH = HTTPBasicAuth(JENKINS_USER, JENKINS_API_TOKEN)
 # =========================================================
 NEXUS_URL = "https://alm-latam-assurance.dev.echonet/nexus/service/rest/v1/components"
 NEXUS_REPO = "ssc_devops_tools"
-
 NEXUS_DOWNLOAD_BASE = "https://alm-latam-assurance.dev.echonet/nexus/repository/ssc_devops_tools"
 
 NEXUS_API_KEY = "a79eae5b-1b06-34e4-9682-733f3347f314"
@@ -58,27 +57,21 @@ NEXUS_AUTH_B64 = "ajEzMzk50jZhMTZkODIZYTM5ZTRkZjcxNTE2MzA2NGEWMWF1MZRK"
 
 
 # =========================================================
-# 📁 CACHE LOCAL
+# 📁 CACHE
 # =========================================================
 CACHE_DIR = Path("cache")
 CACHE_DIR.mkdir(exist_ok=True)
 
 
 def clean_view_name(view: str) -> str:
-    """Convierte 'view/Colombia' → 'Colombia'"""
     return view.replace("view/", "").replace(" ", "_")
 
 
 def get_view_cache_file(view: str) -> Path:
-    """Obtiene la ruta del archivo cache local por view"""
     return CACHE_DIR / f"{clean_view_name(view)}.json"
 
 
 def load_view_cache(view: str) -> Dict[str, Any]:
-    """
-    Carga cache local de forma segura.
-    Si el archivo está vacío o corrupto → ignora y retorna vacío.
-    """
     file = get_view_cache_file(view)
 
     if not file.exists():
@@ -93,7 +86,6 @@ def load_view_cache(view: str) -> Dict[str, Any]:
 
 
 def save_view_cache(view: str, cache_data: Dict[str, Any]) -> None:
-    """Guarda el cache local"""
     file = get_view_cache_file(view)
     cache_data["timestamp"] = dt.datetime.now().isoformat()
 
@@ -102,14 +94,9 @@ def save_view_cache(view: str, cache_data: Dict[str, Any]) -> None:
 
 
 # =========================================================
-# 📥 DESCARGA DESDE NEXUS (ROBUSTA)
+# 📥 DOWNLOAD NEXUS
 # =========================================================
 def download_cache_from_nexus(view: str) -> None:
-    """
-    Descarga cache desde Nexus.
-    - Si 404 → continúa
-    - Si falla → elimina archivo corrupto
-    """
     file = get_view_cache_file(view)
     view_name = clean_view_name(view)
 
@@ -132,44 +119,41 @@ def download_cache_from_nexus(view: str) -> None:
 
     if result.returncode != 0:
         print(f"⚠️ Cache no existe en Nexus para {view}")
-
         if file.exists():
             file.unlink()
 
 
 # =========================================================
-# 📤 SUBIDA A NEXUS (FORMATO ORIGINAL FUNCIONAL)
+# 📤 UPLOAD NEXUS (DEBUG REAL)
 # =========================================================
 def upload_cache_to_nexus(view: str) -> None:
-    """
-    Sube el cache a Nexus usando EXACTAMENTE el formato
-    que ya sabes que funciona en tu entorno.
-    """
     file = get_view_cache_file(view)
     view_name = clean_view_name(view)
 
     RAW_DIRECTORY = f"dora-cache/{view_name}"
 
-    print(f"⬆️ Subiendo cache de {view}...")
+    print(f"\n⬆️ Subiendo cache de {view}...")
 
     if not file.exists():
         print(f"❌ Archivo no existe: {file}")
         return
 
-    cmd = [
-        "curl",
-        "--location",
-        "--request", "POST",
-        f"{NEXUS_URL}?repository={NEXUS_REPO}",
-        "--header", f"X-NuGet-ApiKey: {NEXUS_API_KEY}",
-        "--header", f"Authorization: Basic {NEXUS_AUTH_B64}",
-        "--form", f'raw.directory="{RAW_DIRECTORY}"',
-        "--form", f'raw.asset1=@"{file}"',
-        "--form", f'raw.asset1.filename="{view_name}.json"'
-    ]
+    # 🔥 COMANDO EXACTO
+    cmd_str = f"""
+curl --location --request POST "{NEXUS_URL}?repository={NEXUS_REPO}" \
+--header "X-NuGet-ApiKey: {NEXUS_API_KEY}" \
+--header "Authorization: Basic {NEXUS_AUTH_B64}" \
+--form 'raw.directory="{RAW_DIRECTORY}"' \
+--form 'raw.asset1=@"{file}"' \
+--form 'raw.asset1.filename="{view_name}.json"'
+"""
+
+    print("\n🧪 CURL EJECUTADO:")
+    print(cmd_str)
 
     result = subprocess.run(
-        cmd,
+        cmd_str,
+        shell=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True
@@ -181,17 +165,18 @@ def upload_cache_to_nexus(view: str) -> None:
     print("\n--- STDERR ---")
     print(result.stderr)
 
+    print(f"\nReturn code: {result.returncode}")
+
     if result.returncode != 0:
         print(f"❌ Error subiendo cache ({view})")
     else:
-        print(f"✅ Cache subido correctamente ({view})")
+        print(f"✅ Comando ejecutado ({view})")
 
 
 # =========================================================
-# 🧰 UTILIDADES
+# 🧰 UTIL
 # =========================================================
 def is_within_days(timestamp_ms: int, days: int) -> bool:
-    """Filtra builds por rango de días"""
     build_time = dt.datetime.fromtimestamp(timestamp_ms / 1000)
     return (dt.datetime.now() - build_time).days <= days
 
@@ -246,12 +231,6 @@ def fetch_all_builds(job_url: str):
 
 
 def get_builds_smart(job_url: str, view_cache: dict):
-    """
-    Smart cache:
-    - Detecta jobs nuevos
-    - Detecta builds nuevos
-    - Solo consulta Jenkins cuando hay cambios
-    """
     jobs_cache = view_cache["jobs"]
 
     try:
@@ -286,7 +265,7 @@ def get_builds_smart(job_url: str, view_cache: dict):
 
 
 # =========================================================
-# 📊 MÉTRICAS DORA
+# 📊 MÉTRICAS
 # =========================================================
 def calculate_metrics_for_view(view: str):
     print(f"\n🔍 Procesando {view}...")
