@@ -7,7 +7,6 @@ from typing import Dict, Any
 import requests
 from requests.auth import HTTPBasicAuth
 
-
 # =========================================================
 # 🔧 CONFIG
 # =========================================================
