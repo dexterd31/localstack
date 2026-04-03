@@ -27,7 +27,6 @@ COUNTRY_FOLDERS = [
     "view/PreProd-Chile"
 ]
 
-
 # =========================================================
 # 🌐 PROXY
 # =========================================================
@@ -37,12 +36,10 @@ PROXY = {
 }
 PROXY = {k: v for k, v in PROXY.items() if v}
 
-
 # =========================================================
 # 🔐 AUTH
 # =========================================================
 AUTH = HTTPBasicAuth(JENKINS_USER, JENKINS_API_TOKEN)
-
 
 # =========================================================
 # 📦 NEXUS
@@ -54,7 +51,6 @@ NEXUS_DOWNLOAD_BASE = "https://alm-latam-assurance.dev.echonet/nexus/repository/
 
 NEXUS_API_KEY = "a79eae5b-1b06-34e4-9682-733f3347f314"
 NEXUS_AUTH_B64 = "ajEzMzk50jZhMTZkODIZYTM5ZTRkZjcxNTE2MzA2NGEwMWF1MzRk"
-
 
 # =========================================================
 # 📁 WORKSPACE
@@ -69,7 +65,6 @@ def clean_view_name(view: str) -> str:
 
 
 def get_view_file(view: str) -> Path:
-    """Archivo final en workspace"""
     return CACHE_DIR / f"{clean_view_name(view)}.json"
 
 
@@ -104,7 +99,7 @@ def download_cache_from_nexus(view: str) -> None:
 
 
 # =========================================================
-# 📤 UPLOAD (TU CURL FUNCIONAL)
+# 📤 UPLOAD
 # =========================================================
 def upload_cache_to_nexus(view: str) -> None:
     file = get_view_file(view)
@@ -132,9 +127,6 @@ def upload_cache_to_nexus(view: str) -> None:
         "--form", f'raw.asset1.filename="{view_name}.json"',
     ]
 
-    print("\n🧪 Ejecutando curl:")
-    print(" ".join(cmd))
-
     result = subprocess.run(
         cmd,
         stdout=subprocess.PIPE,
@@ -142,10 +134,7 @@ def upload_cache_to_nexus(view: str) -> None:
         text=True
     )
 
-    print("\n--- STDOUT ---")
     print(result.stdout)
-
-    print("\n--- STDERR ---")
     print(result.stderr)
 
 
@@ -198,6 +187,11 @@ def fetch_all_builds(job_url: str):
     return r.json().get("builds", [])
 
 
+def fetch_builds_since(job_url: str, last_build: int):
+    builds = fetch_all_builds(job_url)
+    return [b for b in builds if b["number"] > last_build]
+
+
 def get_builds_smart(job_url: str, cache: dict):
     try:
         latest = get_last_build_number(job_url)
@@ -212,9 +206,12 @@ def get_builds_smart(job_url: str, cache: dict):
     if cache[job_url]["last"] == latest:
         return cache[job_url]["builds"]
 
-    builds = fetch_all_builds(job_url)
-    cache[job_url] = {"last": latest, "builds": builds}
-    return builds
+    # Solo traer builds nuevos
+    new_builds = fetch_builds_since(job_url, cache[job_url]["last"])
+    cache[job_url]["builds"].extend(new_builds)
+    cache[job_url]["last"] = latest
+
+    return new_builds
 
 
 # =========================================================
@@ -225,7 +222,15 @@ def calculate_metrics_for_view(view: str):
 
     download_cache_from_nexus(view)
 
-    cache_data = {}
+    # Cargar cache previo si existe
+    file = get_view_file(view)
+    if file.exists():
+        with open(file, "r") as f:
+            previous_data = json.load(f)
+        cache_data = previous_data.get("jobs", {})
+    else:
+        cache_data = {}
+
     jobs = get_jobs_from_view(view)
 
     all_builds = []
@@ -234,6 +239,7 @@ def calculate_metrics_for_view(view: str):
         try:
             builds = get_builds_smart(job, cache_data)
 
+            # Filtrar últimos DAYS_BACK días
             builds = [
                 b for b in builds
                 if (dt.datetime.now() - dt.datetime.fromtimestamp(b["timestamp"] / 1000)).days <= DAYS_BACK
@@ -252,7 +258,7 @@ def calculate_metrics_for_view(view: str):
         d = dt.datetime.fromtimestamp(b["timestamp"] / 1000).strftime("%Y-%m-%d")
         deploys_per_day[d] = deploys_per_day.get(d, 0) + 1
 
-    result = {
+    metrics = {
         "view": view,
         "total_jobs": len(jobs),
         "total_builds": len(all_builds),
@@ -261,16 +267,19 @@ def calculate_metrics_for_view(view: str):
         "deploys_per_day": deploys_per_day
     }
 
-    file = get_view_file(view)
+    # Guardar resultado junto con cache de builds
+    result = {
+        "metrics": metrics,
+        "jobs": cache_data
+    }
 
     print(f"💾 Guardando archivo en: {file}")
-
     with open(file, "w") as f:
         json.dump(result, f, indent=2)
 
     upload_cache_to_nexus(view)
 
-    return result
+    return metrics
 
 
 # =========================================================
