@@ -57,10 +57,10 @@ NEXUS_AUTH_B64 = "ajEzMzk50jZhMTZkODIZYTM5ZTRkZjcxNTE2MzA2NGEWMWF1MZRK"
 
 
 # =========================================================
-# 📁 WORKSPACE CACHE (CLAVE)
+# 📁 WORKSPACE
 # =========================================================
-WORKSPACE_DIR = Path.cwd()
-CACHE_DIR = WORKSPACE_DIR / "dora-cache"
+WORKSPACE = Path.cwd()
+CACHE_DIR = WORKSPACE / "dora-cache"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 
@@ -69,7 +69,6 @@ def clean_view_name(view: str) -> str:
 
 
 def get_view_file(view: str) -> Path:
-    """Archivo FINAL en workspace (este es el que se sube)"""
     return CACHE_DIR / f"{clean_view_name(view)}.json"
 
 
@@ -82,7 +81,7 @@ def download_cache_from_nexus(view: str) -> None:
 
     print(f"⬇️ Descargando cache de {view}...")
 
-    url = f"{NEXUS_DOWNLOAD_BASE}/dora-cache/{view_name}.json"
+    url = f"{NEXUS_DOWNLOAD_BASE}/dora/{view_name}.json"
 
     cmd = [
         "curl", "--location", "--request", "GET",
@@ -102,7 +101,7 @@ def download_cache_from_nexus(view: str) -> None:
 
 
 # =========================================================
-# 📤 UPLOAD (USA MISMA RUTA)
+# 📤 UPLOAD (TU CURL FUNCIONAL)
 # =========================================================
 def upload_cache_to_nexus(view: str) -> None:
     file = get_view_file(view)
@@ -110,33 +109,46 @@ def upload_cache_to_nexus(view: str) -> None:
 
     print(f"\n⬆️ Subiendo cache de {view}...")
 
-    print(f"📂 Archivo: {file}")
-    print(f"📂 Existe: {file.exists()}")
+    if not file.exists():
+        print(f"❌ Archivo no existe: {file}")
+        return
 
-    if not file.exists() or file.stat().st_size == 0:
-        print("❌ Archivo no válido, no se sube")
+    if file.stat().st_size == 0:
+        print(f"❌ Archivo vacío: {file}")
         return
 
     cmd = [
-        "curl", "--location", "--request", "POST",
+        "curl",
+        "--location",
+        "--request", "POST",
         f"{NEXUS_URL}?repository={NEXUS_REPO}",
         "--header", f"X-NuGet-ApiKey: {NEXUS_API_KEY}",
         "--header", f"Authorization: Basic {NEXUS_AUTH_B64}",
-        "--form", f'raw.directory="dora-cache"',
+        "--form", f'raw.directory="dora"',
         "--form", f'raw.asset1=@"{file}"',
-        "--form", f'raw.asset1.filename="{view_name}.json"'
+        "--form", f'raw.asset1.filename="{view_name}.json"',
     ]
 
     print("\n🧪 CURL:")
     print(" ".join(cmd))
 
-    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    result = subprocess.run(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True
+    )
 
     print("\n--- STDOUT ---")
     print(result.stdout)
 
     print("\n--- STDERR ---")
     print(result.stderr)
+
+    if result.returncode != 0:
+        print(f"❌ Error subiendo ({view})")
+    else:
+        print(f"✅ Subido correctamente ({view})")
 
 
 # =========================================================
@@ -188,45 +200,29 @@ def fetch_all_builds(job_url: str):
     return r.json().get("builds", [])
 
 
-def get_builds_smart(job_url: str, cache: dict):
-    try:
-        latest = get_last_build_number(job_url)
-    except:
-        return []
-
-    if job_url not in cache:
-        builds = fetch_all_builds(job_url)
-        cache[job_url] = {"last": latest, "builds": builds}
-        return builds
-
-    if cache[job_url]["last"] == latest:
-        return cache[job_url]["builds"]
-
-    builds = fetch_all_builds(job_url)
-    cache[job_url] = {"last": latest, "builds": builds}
-    return builds
-
-
 # =========================================================
-# 📊 MÉTRICAS + ESCRITURA EN WORKSPACE
+# 📊 MÉTRICAS
 # =========================================================
 def calculate_metrics_for_view(view: str):
     print(f"\n🔍 Procesando {view}...")
 
     download_cache_from_nexus(view)
 
-    cache_data = {}
     jobs = get_jobs_from_view(view)
+    print(f"   Jobs encontrados: {len(jobs)}")
 
     all_builds = []
 
     for job in jobs:
         try:
-            builds = get_builds_smart(job, cache_data)
-            builds = [b for b in builds if (dt.datetime.now() - dt.datetime.fromtimestamp(b["timestamp"]/1000)).days <= DAYS_BACK]
+            builds = fetch_all_builds(job)
+            builds = [
+                b for b in builds
+                if (dt.datetime.now() - dt.datetime.fromtimestamp(b["timestamp"]/1000)).days <= DAYS_BACK
+            ]
             all_builds.extend(builds)
         except Exception as e:
-            print(f"⚠️ Error en {job}: {e}")
+            print(f"⚠️ Error en job {job}: {e}")
 
     success = [b for b in all_builds if b.get("result") == "SUCCESS"]
     failed = [b for b in all_builds if b.get("result") != "SUCCESS"]
@@ -245,14 +241,14 @@ def calculate_metrics_for_view(view: str):
         "deploys_per_day": deploys_per_day
     }
 
-    # 🔥 GUARDAR EN WORKSPACE (CLAVE)
+    # 💾 Guardar en workspace
     file = get_view_file(view)
-    print(f"💾 Guardando archivo en: {file}")
+    print(f"💾 Guardando en: {file}")
 
     with open(file, "w") as f:
         json.dump(result, f, indent=2)
 
-    # 🔥 SUBIR MISMO ARCHIVO
+    # 🚀 Subir
     upload_cache_to_nexus(view)
 
     return result
