@@ -50,7 +50,6 @@ AUTH = HTTPBasicAuth(JENKINS_USER, JENKINS_API_TOKEN)
 # =========================================================
 NEXUS_URL = "https://alm-latam-assurance.dev.echonet/nexus/service/rest/v1/components"
 NEXUS_REPO = "ssc_devops_tools"
-
 NEXUS_DOWNLOAD_BASE = "https://alm-latam-assurance.dev.echonet/nexus/repository/ssc_devops_tools"
 
 NEXUS_API_KEY = "a79eae5b-1b06-34e4-9682-733f3347f314"
@@ -58,47 +57,27 @@ NEXUS_AUTH_B64 = "ajEzMzk50jZhMTZkODIZYTM5ZTRkZjcxNTE2MzA2NGEWMWF1MZRK"
 
 
 # =========================================================
-# 📁 CACHE
+# 📁 WORKSPACE CACHE (CLAVE)
 # =========================================================
-CACHE_DIR = Path("cache")
-CACHE_DIR.mkdir(exist_ok=True)
+WORKSPACE_DIR = Path.cwd()
+CACHE_DIR = WORKSPACE_DIR / "dora-cache"
+CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def clean_view_name(view: str) -> str:
     return view.replace("view/", "").replace(" ", "_")
 
 
-def get_view_cache_file(view: str) -> Path:
+def get_view_file(view: str) -> Path:
+    """Archivo FINAL en workspace (este es el que se sube)"""
     return CACHE_DIR / f"{clean_view_name(view)}.json"
 
 
-def load_view_cache(view: str) -> Dict[str, Any]:
-    file = get_view_cache_file(view)
-
-    if not file.exists():
-        return {"jobs": {}, "timestamp": None}
-
-    try:
-        with open(file, "r") as f:
-            return json.load(f)
-    except Exception:
-        print(f"⚠️ Cache inválido en {view}, se ignora")
-        return {"jobs": {}, "timestamp": None}
-
-
-def save_view_cache(view: str, cache_data: Dict[str, Any]) -> None:
-    file = get_view_cache_file(view)
-    cache_data["timestamp"] = dt.datetime.now().isoformat()
-
-    with open(file, "w") as f:
-        json.dump(cache_data, f)
-
-
 # =========================================================
-# 📥 DOWNLOAD (MISMO ESTILO)
+# 📥 DOWNLOAD
 # =========================================================
 def download_cache_from_nexus(view: str) -> None:
-    file = get_view_cache_file(view)
+    file = get_view_file(view)
     view_name = clean_view_name(view)
 
     print(f"⬇️ Descargando cache de {view}...")
@@ -117,24 +96,25 @@ def download_cache_from_nexus(view: str) -> None:
     result = subprocess.run(cmd)
 
     if result.returncode != 0:
-        print(f"⚠️ Cache no existe en Nexus para {view}")
+        print(f"⚠️ No existe cache en Nexus ({view})")
         if file.exists():
             file.unlink()
 
 
 # =========================================================
-# 📤 UPLOAD (EXACTAMENTE TU FORMATO)
+# 📤 UPLOAD (USA MISMA RUTA)
 # =========================================================
 def upload_cache_to_nexus(view: str) -> None:
-    file = get_view_cache_file(view)
+    file = get_view_file(view)
     view_name = clean_view_name(view)
-
-    RAW_DIRECTORY = "dora-cache"
 
     print(f"\n⬆️ Subiendo cache de {view}...")
 
-    if not file.exists():
-        print(f"❌ Archivo no existe: {file}")
+    print(f"📂 Archivo: {file}")
+    print(f"📂 Existe: {file.exists()}")
+
+    if not file.exists() or file.stat().st_size == 0:
+        print("❌ Archivo no válido, no se sube")
         return
 
     cmd = [
@@ -142,39 +122,21 @@ def upload_cache_to_nexus(view: str) -> None:
         f"{NEXUS_URL}?repository={NEXUS_REPO}",
         "--header", f"X-NuGet-ApiKey: {NEXUS_API_KEY}",
         "--header", f"Authorization: Basic {NEXUS_AUTH_B64}",
-        "--form", f'raw.directory="{RAW_DIRECTORY}"',
+        "--form", f'raw.directory="dora-cache"',
         "--form", f'raw.asset1=@"{file}"',
         "--form", f'raw.asset1.filename="{view_name}.json"'
     ]
 
-    print("\n🧪 CURL (como tú lo usas):")
+    print("\n🧪 CURL:")
     print(" ".join(cmd))
 
-    result = subprocess.run(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True
-    )
+    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
     print("\n--- STDOUT ---")
     print(result.stdout)
 
     print("\n--- STDERR ---")
     print(result.stderr)
-
-    if result.returncode != 0:
-        print(f"❌ Error subiendo cache ({view})")
-    else:
-        print(f"✅ Subida completada ({view})")
-
-
-# =========================================================
-# 🧰 UTIL
-# =========================================================
-def is_within_days(timestamp_ms: int, days: int) -> bool:
-    build_time = dt.datetime.fromtimestamp(timestamp_ms / 1000)
-    return (dt.datetime.now() - build_time).days <= days
 
 
 # =========================================================
@@ -226,73 +188,74 @@ def fetch_all_builds(job_url: str):
     return r.json().get("builds", [])
 
 
-def get_builds_smart(job_url: str, view_cache: dict):
-    jobs_cache = view_cache["jobs"]
-
+def get_builds_smart(job_url: str, cache: dict):
     try:
-        latest_build = get_last_build_number(job_url)
+        latest = get_last_build_number(job_url)
     except:
         return []
 
-    if job_url not in jobs_cache:
+    if job_url not in cache:
         builds = fetch_all_builds(job_url)
-        jobs_cache[job_url] = {"last_build": latest_build, "builds": builds}
+        cache[job_url] = {"last": latest, "builds": builds}
         return builds
 
-    cached = jobs_cache[job_url]
-
-    if cached["last_build"] == latest_build:
-        return cached["builds"]
+    if cache[job_url]["last"] == latest:
+        return cache[job_url]["builds"]
 
     builds = fetch_all_builds(job_url)
-    jobs_cache[job_url] = {"last_build": latest_build, "builds": builds}
+    cache[job_url] = {"last": latest, "builds": builds}
     return builds
 
 
 # =========================================================
-# 📊 MÉTRICAS
+# 📊 MÉTRICAS + ESCRITURA EN WORKSPACE
 # =========================================================
 def calculate_metrics_for_view(view: str):
     print(f"\n🔍 Procesando {view}...")
 
     download_cache_from_nexus(view)
-    view_cache = load_view_cache(view)
 
+    cache_data = {}
     jobs = get_jobs_from_view(view)
-    print(f"   Jobs encontrados: {len(jobs)}")
 
     all_builds = []
 
     for job in jobs:
         try:
-            builds = get_builds_smart(job, view_cache)
-            builds = [b for b in builds if is_within_days(b["timestamp"], DAYS_BACK)]
+            builds = get_builds_smart(job, cache_data)
+            builds = [b for b in builds if (dt.datetime.now() - dt.datetime.fromtimestamp(b["timestamp"]/1000)).days <= DAYS_BACK]
             all_builds.extend(builds)
         except Exception as e:
-            print(f"⚠️ Error en job {job}: {e}")
+            print(f"⚠️ Error en {job}: {e}")
 
-    save_view_cache(view, view_cache)
-    upload_cache_to_nexus(view)
-
-    total = len(all_builds)
     success = [b for b in all_builds if b.get("result") == "SUCCESS"]
     failed = [b for b in all_builds if b.get("result") != "SUCCESS"]
 
     deploys_per_day = {}
     for b in success:
-        d = dt.datetime.fromtimestamp(b["timestamp"] / 1000).strftime("%Y-%m-%d")
+        d = dt.datetime.fromtimestamp(b["timestamp"]/1000).strftime("%Y-%m-%d")
         deploys_per_day[d] = deploys_per_day.get(d, 0) + 1
 
-    failure_rate = (len(failed) / total * 100) if total else 0
-
-    return {
+    result = {
         "view": view,
         "total_jobs": len(jobs),
-        "total_builds": total,
+        "total_builds": len(all_builds),
         "deployments": len(success),
-        "failure_rate": round(failure_rate, 2),
-        "deploys_per_day": deploys_per_day,
+        "failure_rate": (len(failed)/len(all_builds)*100) if all_builds else 0,
+        "deploys_per_day": deploys_per_day
     }
+
+    # 🔥 GUARDAR EN WORKSPACE (CLAVE)
+    file = get_view_file(view)
+    print(f"💾 Guardando archivo en: {file}")
+
+    with open(file, "w") as f:
+        json.dump(result, f, indent=2)
+
+    # 🔥 SUBIR MISMO ARCHIVO
+    upload_cache_to_nexus(view)
+
+    return result
 
 
 # =========================================================
@@ -303,12 +266,11 @@ def main():
 
     for view in COUNTRY_FOLDERS:
         try:
-            metrics = calculate_metrics_for_view(view)
-            results.append(metrics)
+            results.append(calculate_metrics_for_view(view))
         except Exception as e:
             print(f"❌ Error en {view}: {e}")
 
-    print("\n📊 RESULTADO FINAL:\n")
+    print("\n📊 RESULTADO FINAL:")
     print(json.dumps(results, indent=2))
 
 
