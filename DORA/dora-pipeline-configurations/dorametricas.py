@@ -50,6 +50,7 @@ AUTH = HTTPBasicAuth(JENKINS_USER, JENKINS_API_TOKEN)
 # =========================================================
 NEXUS_URL = "https://alm-latam-assurance.dev.echonet/nexus/service/rest/v1/components"
 NEXUS_REPO = "ssc_devops_tools"
+
 NEXUS_DOWNLOAD_BASE = "https://alm-latam-assurance.dev.echonet/nexus/repository/ssc_devops_tools"
 
 NEXUS_API_KEY = "a79eae5b-1b06-34e4-9682-733f3347f314"
@@ -94,7 +95,7 @@ def save_view_cache(view: str, cache_data: Dict[str, Any]) -> None:
 
 
 # =========================================================
-# 📥 DOWNLOAD NEXUS
+# 📥 DOWNLOAD (MISMO ESTILO)
 # =========================================================
 def download_cache_from_nexus(view: str) -> None:
     file = get_view_cache_file(view)
@@ -102,12 +103,10 @@ def download_cache_from_nexus(view: str) -> None:
 
     print(f"⬇️ Descargando cache de {view}...")
 
-    url = f"{NEXUS_DOWNLOAD_BASE}/dora-cache/{view_name}/{view_name}.json"
+    url = f"{NEXUS_DOWNLOAD_BASE}/dora-cache/{view_name}.json"
 
     cmd = [
-        "curl",
-        "--location",
-        "--request", "GET",
+        "curl", "--location", "--request", "GET",
         url,
         "--header", f"Authorization: Basic {NEXUS_AUTH_B64}",
         "--output", str(file),
@@ -124,13 +123,13 @@ def download_cache_from_nexus(view: str) -> None:
 
 
 # =========================================================
-# 📤 UPLOAD NEXUS (DEBUG REAL)
+# 📤 UPLOAD (EXACTAMENTE TU FORMATO)
 # =========================================================
 def upload_cache_to_nexus(view: str) -> None:
     file = get_view_cache_file(view)
     view_name = clean_view_name(view)
 
-    RAW_DIRECTORY = f"dora-cache/{view_name}"
+    RAW_DIRECTORY = "dora-cache"
 
     print(f"\n⬆️ Subiendo cache de {view}...")
 
@@ -138,22 +137,21 @@ def upload_cache_to_nexus(view: str) -> None:
         print(f"❌ Archivo no existe: {file}")
         return
 
-    # 🔥 COMANDO EXACTO
-    cmd_str = f"""
-curl --location --request POST "{NEXUS_URL}?repository={NEXUS_REPO}" \
---header "X-NuGet-ApiKey: {NEXUS_API_KEY}" \
---header "Authorization: Basic {NEXUS_AUTH_B64}" \
---form 'raw.directory="{RAW_DIRECTORY}"' \
---form 'raw.asset1=@"{file}"' \
---form 'raw.asset1.filename="{view_name}.json"'
-"""
+    cmd = [
+        "curl", "--location", "--request", "POST",
+        f"{NEXUS_URL}?repository={NEXUS_REPO}",
+        "--header", f"X-NuGet-ApiKey: {NEXUS_API_KEY}",
+        "--header", f"Authorization: Basic {NEXUS_AUTH_B64}",
+        "--form", f'raw.directory="{RAW_DIRECTORY}"',
+        "--form", f'raw.asset1=@"{file}"',
+        "--form", f'raw.asset1.filename="{view_name}.json"'
+    ]
 
-    print("\n🧪 CURL EJECUTADO:")
-    print(cmd_str)
+    print("\n🧪 CURL (como tú lo usas):")
+    print(" ".join(cmd))
 
     result = subprocess.run(
-        cmd_str,
-        shell=True,
+        cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True
@@ -165,12 +163,10 @@ curl --location --request POST "{NEXUS_URL}?repository={NEXUS_REPO}" \
     print("\n--- STDERR ---")
     print(result.stderr)
 
-    print(f"\nReturn code: {result.returncode}")
-
     if result.returncode != 0:
         print(f"❌ Error subiendo cache ({view})")
     else:
-        print(f"✅ Comando ejecutado ({view})")
+        print(f"✅ Subida completada ({view})")
 
 
 # =========================================================
@@ -239,13 +235,8 @@ def get_builds_smart(job_url: str, view_cache: dict):
         return []
 
     if job_url not in jobs_cache:
-        print(f"🆕 Nuevo job: {job_url}")
         builds = fetch_all_builds(job_url)
-
-        jobs_cache[job_url] = {
-            "last_build": latest_build,
-            "builds": builds
-        }
+        jobs_cache[job_url] = {"last_build": latest_build, "builds": builds}
         return builds
 
     cached = jobs_cache[job_url]
@@ -253,14 +244,8 @@ def get_builds_smart(job_url: str, view_cache: dict):
     if cached["last_build"] == latest_build:
         return cached["builds"]
 
-    print(f"♻️ Actualizando job: {job_url}")
     builds = fetch_all_builds(job_url)
-
-    jobs_cache[job_url] = {
-        "last_build": latest_build,
-        "builds": builds
-    }
-
+    jobs_cache[job_url] = {"last_build": latest_build, "builds": builds}
     return builds
 
 
