@@ -1,7 +1,9 @@
+import json
 import datetime as dt
 import requests
 import re
 import urllib3
+from collections import defaultdict
 from requests.auth import HTTPBasicAuth
 
 # =========================================================
@@ -20,10 +22,12 @@ BITBUCKET_URL = "https://devops-latam-assurance.is.echonet/git"
 BITBUCKET_TOKEN = "TU_TOKEN_BITBUCKET"
 
 DAYS_BACK = 30
-MAX_LEAD_TIME_HOURS = 720  # 30 días
+MAX_LEAD_TIME_HOURS = 720
 
 ROOT_VIEW = "view/Devops LAM"
 ROOT_FOLDER = "Centralized_DevOps_LAM"
+
+COUNTRIES = ["colombia", "chile", "brasil", "mexico", "peru", "latam", "devops"]
 
 # =========================================================
 # 🌐 PROXY
@@ -34,9 +38,6 @@ PROXY = {
 }
 PROXY = {k: v for k, v in PROXY.items() if v}
 
-# =========================================================
-# 🔐 AUTH
-# =========================================================
 AUTH = HTTPBasicAuth(JENKINS_USER, JENKINS_API_TOKEN)
 
 # =========================================================
@@ -51,21 +52,26 @@ def get_jobs(url):
 
 def get_all_jobs_recursive(url):
     jobs = []
-
     for item in get_jobs(url):
         if "Folder" in item.get("_class", ""):
             jobs.extend(get_all_jobs_recursive(item["url"]))
         else:
             jobs.append(item["url"])
-
     return jobs
 
 
 # =========================================================
-# 🎯 FILTRO PRODUCCIÓN
+# 🎯 FILTROS
 # =========================================================
 def is_master_job(job_url):
     return "/master" in job_url.lower()
+
+
+def extract_country(job_url):
+    for c in COUNTRIES:
+        if f"/{c}/" in job_url.lower():
+            return c.capitalize()
+    return "Unknown"
 
 
 # =========================================================
@@ -84,12 +90,8 @@ def fetch_builds(job_url):
 def extract_git_info(build_json):
     for action in build_json.get("actions", []):
         if action.get("_class") == "hudson.plugins.git.util.BuildData":
-
             sha = action.get("lastBuiltRevision", {}).get("SHA1")
-
-            repo_url = None
-            if action.get("remoteUrls"):
-                repo_url = action["remoteUrls"][0]
+            repo_url = action.get("remoteUrls", [None])[0]
 
             if sha and repo_url:
                 match = re.search(r"/scm/([^/]+)/(.+)\.git", repo_url)
@@ -99,7 +101,6 @@ def extract_git_info(build_json):
                         "project": match.group(1),
                         "repo": match.group(2)
                     }
-
     return None
 
 
@@ -108,10 +109,7 @@ def extract_git_info(build_json):
 # =========================================================
 def get_commit_timestamp(project, repo, sha):
     url = f"{BITBUCKET_URL}/rest/api/latest/projects/{project}/repos/{repo}/commits/{sha}"
-
-    headers = {
-        "Authorization": f"Bearer {BITBUCKET_TOKEN}"
-    }
+    headers = {"Authorization": f"Bearer {BITBUCKET_TOKEN}"}
 
     try:
         r = requests.get(url, headers=headers, verify=False)
@@ -132,8 +130,8 @@ def calculate_lead_time(builds, job_url):
             continue
 
         try:
-            build_url = f"{job_url}/{b['number']}/api/json"
-            r = requests.get(build_url, auth=AUTH, proxies=PROXY, verify=False)
+            url = f"{job_url}/{b['number']}/api/json"
+            r = requests.get(url, auth=AUTH, proxies=PROXY, verify=False)
             r.raise_for_status()
 
             detail = r.json()
@@ -152,8 +150,8 @@ def calculate_lead_time(builds, job_url):
             if 0 < lt <= MAX_LEAD_TIME_HOURS:
                 times.append(lt)
 
-        except Exception as e:
-            print(f"⚠️ LeadTime error build {b['number']}: {e}")
+        except:
+            continue
 
     return round(sum(times) / len(times), 2) if times else 0
 
@@ -171,7 +169,6 @@ def calculate_mttr(builds):
         if b["result"] != "SUCCESS":
             if fail_time is None:
                 fail_time = b["timestamp"]
-
         elif fail_time:
             mttr.append(b["timestamp"] - fail_time)
             fail_time = None
@@ -180,25 +177,37 @@ def calculate_mttr(builds):
 
 
 # =========================================================
-# 🚀 MAIN LOGIC
+# 🎯 PERFORMANCE DISTRIBUTION
+# =========================================================
+def classify_performance(days):
+    if days < 1:
+        return "Élite"
+    elif days < 7:
+        return "Alto"
+    elif days < 30:
+        return "Medio"
+    else:
+        return "Bajo"
+
+
+# =========================================================
+# 🚀 MAIN
 # =========================================================
 def main():
 
     root_url = f"{JENKINS_URL}/{ROOT_VIEW}/job/{ROOT_FOLDER}"
 
-    print(f"\n🔍 Procesando estructura centralizada...\n")
-
     all_jobs = get_all_jobs_recursive(root_url)
-
-    # 🔥 SOLO MASTER
     prod_jobs = [j for j in all_jobs if is_master_job(j)]
 
-    print(f"🎯 Jobs de producción encontrados: {len(prod_jobs)}")
-
-    all_builds = []
-    lead_times = []
+    country_data = defaultdict(lambda: {
+        "builds": [],
+        "lead_times": []
+    })
 
     for job in prod_jobs:
+        country = extract_country(job)
+
         try:
             builds = fetch_builds(job)
 
@@ -207,35 +216,94 @@ def main():
                 if (dt.datetime.now() - dt.datetime.fromtimestamp(b["timestamp"] / 1000)).days <= DAYS_BACK
             ]
 
-            all_builds.extend(builds)
+            country_data[country]["builds"].extend(builds)
 
             lt = calculate_lead_time(builds, job)
             if lt > 0:
-                lead_times.append(lt)
+                country_data[country]["lead_times"].append(lt)
 
-        except Exception as e:
-            print(f"⚠️ Error job {job}: {e}")
+        except:
+            continue
 
-    success = [b for b in all_builds if b["result"] == "SUCCESS"]
-    failed = [b for b in all_builds if b["result"] != "SUCCESS"]
+    countries_output = []
+    all_lead_days = []
 
-    failure_rate = (len(failed) / len(all_builds) * 100) if all_builds else 0
-    mttr = calculate_mttr(all_builds)
-    lead_time = round(sum(lead_times) / len(lead_times), 2) if lead_times else 0
+    for country, data in country_data.items():
+        builds = data["builds"]
+
+        success = [b for b in builds if b["result"] == "SUCCESS"]
+        failed = [b for b in builds if b["result"] != "SUCCESS"]
+
+        failure_rate = (len(failed) / len(builds) * 100) if builds else 0
+        mttr = calculate_mttr(builds)
+
+        lead_time_hours = round(sum(data["lead_times"]) / len(data["lead_times"]), 2) if data["lead_times"] else 0
+        lead_time_days = round(lead_time_hours / 24, 2)
+
+        all_lead_days.append(lead_time_days)
+
+        deployments_per_week = round(len(success) / (DAYS_BACK / 7), 2)
+
+        countries_output.append({
+            "name": country,
+            "deployment_frequency": deployments_per_week,
+            "lead_time": lead_time_days,
+            "mttr": mttr,
+            "failure_rate": round(failure_rate, 2)
+        })
 
     # =====================================================
-    # 📊 DASHBOARD FINAL
+    # REGIONAL
     # =====================================================
-    print(f"""
-📊 ===== DEVOPS LAM (PRODUCCIÓN REAL) =====
-Jobs (master): {len(prod_jobs)}
-Builds: {len(all_builds)}
-Deployments: {len(success)}
-Failure Rate: {failure_rate:.2f}%
-MTTR (hrs): {mttr}
-Lead Time (hrs): {lead_time}
-===========================================
-""")
+    def avg(key):
+        vals = [c[key] for c in countries_output if c[key] > 0]
+        return round(sum(vals) / len(vals), 2) if vals else 0
+
+    regional = {
+        "deployment_frequency": {"value": avg("deployment_frequency"), "trend": {"direction": "up", "percent": 0}},
+        "lead_time": {"value": avg("lead_time"), "trend": {"direction": "down", "percent": 0}},
+        "mttr": {"value": avg("mttr"), "trend": {"direction": "down", "percent": 0}},
+        "failure_rate": {"value": avg("failure_rate"), "trend": {"direction": "down", "percent": 0}}
+    }
+
+    # =====================================================
+    # PERFORMANCE DISTRIBUTION
+    # =====================================================
+    levels = {"Élite": 0, "Alto": 0, "Medio": 0, "Bajo": 0}
+
+    for lt in all_lead_days:
+        level = classify_performance(lt)
+        levels[level] += 1
+
+    performance_distribution = {
+        "labels": ["Élite", "Alto", "Medio", "Bajo"],
+        "values": [levels["Élite"], levels["Alto"], levels["Medio"], levels["Bajo"]]
+    }
+
+    # =====================================================
+    # EVOLUTION (mock inicial)
+    # =====================================================
+    evolution = {
+        "months": ["Jan", "Feb", "Mar", "Apr", "May", "Jun"],
+        "deployment_frequency": [3, 3.2, 3.5, 3.8, 3.6, 3.9],
+        "lead_time": [2.5, 2.3, 2.2, 2.1, 2.0, 1.9],
+        "failure_rate": [3.0, 2.8, 2.6, 2.4, 2.2, 2.0]
+    }
+
+    # =====================================================
+    # FINAL JSON
+    # =====================================================
+    dora_data = {
+        "regional": regional,
+        "countries": countries_output,
+        "evolution": evolution,
+        "performance_distribution": performance_distribution
+    }
+
+    with open("dora-summary.json", "w") as f:
+        json.dump(dora_data, f, indent=2)
+
+    print("\n✅ Archivo generado: dora-summary.json\n")
 
 
 if __name__ == "__main__":
