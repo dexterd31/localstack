@@ -1,6 +1,7 @@
 import json
 import datetime as dt
 import requests
+import re
 from requests.auth import HTTPBasicAuth
 
 # =========================================================
@@ -8,7 +9,10 @@ from requests.auth import HTTPBasicAuth
 # =========================================================
 JENKINS_URL = "https://alm-latam-assurance.dev.echonet/jenkins"
 JENKINS_USER = "j13399"
-JENKINS_API_TOKEN = "118f321bb3320e8d99d95eb4719653afbd"
+JENKINS_API_TOKEN = "TU_TOKEN_JENKINS"
+
+BITBUCKET_URL = "https://devops-latam-assurance.is.echonet/git"
+BITBUCKET_TOKEN = "TU_TOKEN_BITBUCKET"
 
 DAYS_BACK = 30
 
@@ -80,7 +84,105 @@ def fetch_all_builds(job_url: str):
 
 
 # =========================================================
-# 🧠 MTTR
+# 🧠 GIT INFO DESDE JENKINS
+# =========================================================
+def extract_git_info(build_json):
+    for action in build_json.get("actions", []):
+
+        if action.get("_class") == "hudson.plugins.git.util.BuildData":
+
+            sha = None
+            if "lastBuiltRevision" in action:
+                sha = action["lastBuiltRevision"].get("SHA1")
+
+            repo_url = None
+            if "remoteUrls" in action and action["remoteUrls"]:
+                repo_url = action["remoteUrls"][0]
+
+            if sha and repo_url:
+                match = re.search(r"/scm/([^/]+)/(.+)\.git", repo_url)
+
+                if match:
+                    return {
+                        "sha": sha,
+                        "project": match.group(1),
+                        "repo": match.group(2)
+                    }
+
+    return None
+
+
+# =========================================================
+# 🌐 BITBUCKET
+# =========================================================
+def get_commit_timestamp(project, repo, sha):
+    url = f"{BITBUCKET_URL}/rest/api/latest/projects/{project}/repos/{repo}/commits/{sha}"
+
+    headers = {
+        "Authorization": f"Bearer {BITBUCKET_TOKEN}"
+    }
+
+    try:
+        r = requests.get(url, headers=headers, verify=False)
+        r.raise_for_status()
+
+        data = r.json()
+        return data.get("authorTimestamp")
+
+    except Exception as e:
+        print(f"⚠️ Error commit {sha}: {e}")
+        return None
+
+
+# =========================================================
+# ⏱️ LEAD TIME
+# =========================================================
+def calculate_lead_time(builds, job_url):
+    lead_times = []
+
+    for b in builds:
+        if b.get("result") != "SUCCESS":
+            continue
+
+        try:
+            build_number = b["number"]
+            build_url = f"{job_url}/{build_number}/api/json"
+
+            r = requests.get(build_url, auth=AUTH, proxies=PROXY)
+            r.raise_for_status()
+
+            build_detail = r.json()
+
+            git_info = extract_git_info(build_detail)
+
+            if not git_info:
+                continue
+
+            commit_ts = get_commit_timestamp(
+                git_info["project"],
+                git_info["repo"],
+                git_info["sha"]
+            )
+
+            if not commit_ts:
+                continue
+
+            build_ts = build_detail["timestamp"]
+
+            lead_time = (build_ts - commit_ts) / 1000 / 3600
+            lead_times.append(lead_time)
+
+        except Exception as e:
+            print(f"⚠️ Error en build {b.get('number')}: {e}")
+
+    if not lead_times:
+        return 0
+
+    return round(sum(lead_times) / len(lead_times), 2)
+
+
+# =========================================================
+# 🔧 MTTR
 # =========================================================
 def calculate_mttr(builds):
     builds_sorted = sorted(builds, key=lambda x: x["timestamp"])
@@ -113,18 +215,22 @@ def calculate_metrics_for_view(view: str):
     jobs = get_jobs_from_view(view)
 
     all_builds = []
+    all_lead_times = []
 
     for job in jobs:
         try:
             builds = fetch_all_builds(job)
 
-            # Filtrar últimos días
             builds = [
                 b for b in builds
                 if (dt.datetime.now() - dt.datetime.fromtimestamp(b["timestamp"] / 1000)).days <= DAYS_BACK
             ]
 
             all_builds.extend(builds)
+
+            lt = calculate_lead_time(builds, job)
+            if lt > 0:
+                all_lead_times.append(lt)
 
         except Exception as e:
             print(f"⚠️ Error en {job}: {e}")
@@ -139,6 +245,8 @@ def calculate_metrics_for_view(view: str):
 
     mttr = calculate_mttr(all_builds)
 
+    lead_time_final = round(sum(all_lead_times) / len(all_lead_times), 2) if all_lead_times else 0
+
     metrics = {
         "view": view,
         "total_jobs": len(jobs),
@@ -146,10 +254,11 @@ def calculate_metrics_for_view(view: str):
         "deployments": len(success),
         "failure_rate": (len(failed) / len(all_builds) * 100) if all_builds else 0,
         "mttr_hours": mttr,
+        "lead_time_hours": lead_time_final,
         "deploys_per_day": deploys_per_day
     }
 
-    # 🔥 LOG TIPO DASHBOARD
+    # 🔥 DASHBOARD LOG
     print(f"""
 📊 ===== {view} =====
 Jobs: {metrics['total_jobs']}
@@ -157,6 +266,7 @@ Builds: {metrics['total_builds']}
 Deployments: {metrics['deployments']}
 Failure Rate: {metrics['failure_rate']:.2f}%
 MTTR (hrs): {metrics['mttr_hours']}
+Lead Time (hrs): {metrics['lead_time_hours']}
 ========================
 """)
 
@@ -167,16 +277,14 @@ MTTR (hrs): {metrics['mttr_hours']}
 # 🚀 MAIN
 # =========================================================
 def main():
-    results = []
-
     for view in COUNTRY_FOLDERS:
         try:
-            results.append(calculate_metrics_for_view(view))
+            calculate_metrics_for_view(view)
         except Exception as e:
             print(f"❌ Error en {view}: {e}")
 
-    print("\n✅ Ejecución finalizada correctamente.")
+    print("\n✅ Ejecución finalizada.")
 
 
 if __name__ == "__main__":
-    main()
+    main()  
