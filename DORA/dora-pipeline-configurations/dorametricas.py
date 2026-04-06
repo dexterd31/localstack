@@ -2,7 +2,6 @@ import json
 import datetime as dt
 import subprocess
 from pathlib import Path
-from typing import Dict, Any
 
 import requests
 from requests.auth import HTTPBasicAuth
@@ -69,33 +68,55 @@ def get_view_file(view: str) -> Path:
 
 
 # =========================================================
-# 📥 DOWNLOAD
+# 📥 DOWNLOAD (TU VERSION)
 # =========================================================
 def download_cache_from_nexus(view: str) -> None:
+    # 🔥 Limpia TODO el cache (como pediste)
+    subprocess.run(["rm", "-rf", "*"], cwd=CACHE_DIR, check=True)
+
     file = get_view_file(view)
     view_name = clean_view_name(view)
 
-    print(f"⬇️ Descargando cache de {view}...")
-
     url = f"{NEXUS_DOWNLOAD_BASE}/dora-cache/{view_name}.json"
+
+    print(f"⬇️ Descargando cache de {view}...")
 
     cmd = [
         "curl",
         "--location",
         "--request", "GET",
         url,
-        "--header", f"Authorization: Basic {NEXUS_AUTH_B64}",
         "--output", str(file),
         "--silent",
         "--fail"
     ]
 
-    result = subprocess.run(cmd)
+    result = subprocess.run(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True
+    )
 
     if result.returncode != 0:
         print(f"⚠️ No existe cache en Nexus ({view})")
         if file.exists():
             file.unlink()
+    else:
+        print("✅ Cache descargado correctamente")
+
+    # Debug
+    ls_result = subprocess.run(
+        ["ls", "-lta"],
+        cwd=CACHE_DIR,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True
+    )
+
+    print(ls_result.stdout)
+    if ls_result.stderr:
+        print(ls_result.stderr)
 
 
 # =========================================================
@@ -107,12 +128,8 @@ def upload_cache_to_nexus(view: str) -> None:
 
     print(f"\n⬆️ Subiendo cache de {view}...")
 
-    if not file.exists():
-        print("❌ Archivo no encontrado:", file)
-        return
-
-    if file.stat().st_size == 0:
-        print("❌ Archivo vacío:", file)
+    if not file.exists() or file.stat().st_size == 0:
+        print("❌ Archivo inválido:", file)
         return
 
     cmd = [
@@ -206,8 +223,8 @@ def get_builds_smart(job_url: str, cache: dict):
     if cache[job_url]["last"] == latest:
         return cache[job_url]["builds"]
 
-    # Solo traer builds nuevos
     new_builds = fetch_builds_since(job_url, cache[job_url]["last"])
+
     cache[job_url]["builds"].extend(new_builds)
     cache[job_url]["last"] = latest
 
@@ -222,9 +239,8 @@ def calculate_metrics_for_view(view: str):
 
     download_cache_from_nexus(view)
 
-    # Cargar cache previo si existe
     file = get_view_file(view)
-    if file.exists():
+    if file.exists() and file.stat().st_size > 0:
         with open(file, "r") as f:
             previous_data = json.load(f)
         cache_data = previous_data.get("jobs", {})
@@ -239,7 +255,6 @@ def calculate_metrics_for_view(view: str):
         try:
             builds = get_builds_smart(job, cache_data)
 
-            # Filtrar últimos DAYS_BACK días
             builds = [
                 b for b in builds
                 if (dt.datetime.now() - dt.datetime.fromtimestamp(b["timestamp"] / 1000)).days <= DAYS_BACK
@@ -267,7 +282,6 @@ def calculate_metrics_for_view(view: str):
         "deploys_per_day": deploys_per_day
     }
 
-    # Guardar resultado junto con cache de builds
     result = {
         "metrics": metrics,
         "jobs": cache_data
@@ -280,6 +294,54 @@ def calculate_metrics_for_view(view: str):
     upload_cache_to_nexus(view)
 
     return metrics
+
+
+# =========================================================
+# 🌐 HTML REPORT
+# =========================================================
+def generate_html_report(results):
+    html_file = WORKSPACE_DIR / "report.html"
+
+    print(f"🌐 Generando reporte HTML: {html_file}")
+
+    html = """
+    <html>
+    <head>
+        <title>DORA Metrics</title>
+        <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    </head>
+    <body>
+        <h1>DORA Metrics Report</h1>
+    """
+
+    for i, r in enumerate(results):
+        labels = list(r["deploys_per_day"].keys())
+        values = list(r["deploys_per_day"].values())
+
+        html += f"""
+        <h2>{r['view']}</h2>
+        <p>Deployments: {r['deployments']}</p>
+        <p>Failure Rate: {r['failure_rate']:.2f}%</p>
+        <canvas id="chart{i}"></canvas>
+
+        <script>
+        new Chart(document.getElementById('chart{i}'), {{
+            type: 'line',
+            data: {{
+                labels: {labels},
+                datasets: [{{
+                    label: 'Deploys',
+                    data: {values}
+                }}]
+            }}
+        }});
+        </script>
+        """
+
+    html += "</body></html>"
+
+    with open(html_file, "w") as f:
+        f.write(html)
 
 
 # =========================================================
@@ -296,6 +358,8 @@ def main():
 
     print("\n📊 RESULTADO FINAL:")
     print(json.dumps(results, indent=2))
+
+    generate_html_report(results)
 
 
 if __name__ == "__main__":
