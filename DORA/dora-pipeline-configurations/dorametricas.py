@@ -1,4 +1,3 @@
-import json
 import datetime as dt
 import requests
 import re
@@ -21,18 +20,10 @@ BITBUCKET_URL = "https://devops-latam-assurance.is.echonet/git"
 BITBUCKET_TOKEN = "TU_TOKEN_BITBUCKET"
 
 DAYS_BACK = 30
-MAX_LEAD_TIME_HOURS = 720  # 🔥 máximo 30 días (evita valores absurdos)
+MAX_LEAD_TIME_HOURS = 720  # 30 días
 
-COUNTRY_FOLDERS = [
-    "view/Chile",
-    "view/Automation",
-    "view/Colombia",
-    "view/Devops LAM",
-    "view/KAFKA",
-    "view/LAM Microservices",
-    "view/PIMS",
-    "view/PreProd-Chile"
-]
+ROOT_VIEW = "view/Devops LAM"
+ROOT_FOLDER = "Centralized_DevOps_LAM"
 
 # =========================================================
 # 🌐 PROXY
@@ -49,41 +40,38 @@ PROXY = {k: v for k, v in PROXY.items() if v}
 AUTH = HTTPBasicAuth(JENKINS_USER, JENKINS_API_TOKEN)
 
 # =========================================================
-# 📡 JENKINS
+# 📡 JENKINS NAV
 # =========================================================
-def get_view_jobs(view: str):
-    url = f"{JENKINS_URL}/{view}/api/json?tree=jobs[name,url,_class]"
-    r = requests.get(url, auth=AUTH, proxies=PROXY, verify=False)
+def get_jobs(url):
+    api = f"{url}/api/json?tree=jobs[name,url,_class]"
+    r = requests.get(api, auth=AUTH, proxies=PROXY, verify=False)
     r.raise_for_status()
     return r.json().get("jobs", [])
 
 
-def get_all_jobs(job_url: str):
+def get_all_jobs_recursive(url):
     jobs = []
-    url = f"{job_url}/api/json?tree=jobs[name,url,_class]"
-    r = requests.get(url, auth=AUTH, proxies=PROXY, verify=False)
-    r.raise_for_status()
 
-    for item in r.json().get("jobs", []):
+    for item in get_jobs(url):
         if "Folder" in item.get("_class", ""):
-            jobs.extend(get_all_jobs(item["url"]))
+            jobs.extend(get_all_jobs_recursive(item["url"]))
         else:
             jobs.append(item["url"])
 
     return jobs
 
 
-def get_jobs_from_view(view: str):
-    jobs = []
-    for item in get_view_jobs(view):
-        if "Folder" in item.get("_class", ""):
-            jobs.extend(get_all_jobs(item["url"]))
-        else:
-            jobs.append(item["url"])
-    return jobs
+# =========================================================
+# 🎯 FILTRO PRODUCCIÓN
+# =========================================================
+def is_master_job(job_url):
+    return "/master" in job_url.lower()
 
 
-def fetch_all_builds(job_url: str):
+# =========================================================
+# 📦 BUILDS
+# =========================================================
+def fetch_builds(job_url):
     url = f"{job_url}/api/json?tree=builds[number,result,timestamp]"
     r = requests.get(url, auth=AUTH, proxies=PROXY, verify=False)
     r.raise_for_status()
@@ -91,24 +79,20 @@ def fetch_all_builds(job_url: str):
 
 
 # =========================================================
-# 🧠 GIT INFO DESDE JENKINS
+# 🧠 GIT INFO
 # =========================================================
 def extract_git_info(build_json):
     for action in build_json.get("actions", []):
-
         if action.get("_class") == "hudson.plugins.git.util.BuildData":
 
-            sha = None
-            if "lastBuiltRevision" in action:
-                sha = action["lastBuiltRevision"].get("SHA1")
+            sha = action.get("lastBuiltRevision", {}).get("SHA1")
 
             repo_url = None
-            if "remoteUrls" in action and action["remoteUrls"]:
+            if action.get("remoteUrls"):
                 repo_url = action["remoteUrls"][0]
 
             if sha and repo_url:
                 match = re.search(r"/scm/([^/]+)/(.+)\.git", repo_url)
-
                 if match:
                     return {
                         "sha": sha,
@@ -132,12 +116,8 @@ def get_commit_timestamp(project, repo, sha):
     try:
         r = requests.get(url, headers=headers, verify=False)
         r.raise_for_status()
-
-        data = r.json()
-        return data.get("authorTimestamp")
-
-    except Exception as e:
-        print(f"⚠️ Error commit {sha}: {e}")
+        return r.json().get("authorTimestamp")
+    except:
         return None
 
 
@@ -145,91 +125,82 @@ def get_commit_timestamp(project, repo, sha):
 # ⏱️ LEAD TIME
 # =========================================================
 def calculate_lead_time(builds, job_url):
-    lead_times = []
+    times = []
 
     for b in builds:
         if b.get("result") != "SUCCESS":
             continue
 
         try:
-            build_number = b["number"]
-            build_url = f"{job_url}/{build_number}/api/json"
-
+            build_url = f"{job_url}/{b['number']}/api/json"
             r = requests.get(build_url, auth=AUTH, proxies=PROXY, verify=False)
             r.raise_for_status()
 
-            build_detail = r.json()
+            detail = r.json()
+            git = extract_git_info(detail)
 
-            git_info = extract_git_info(build_detail)
-
-            if not git_info:
+            if not git:
                 continue
 
-            commit_ts = get_commit_timestamp(
-                git_info["project"],
-                git_info["repo"],
-                git_info["sha"]
-            )
-
+            commit_ts = get_commit_timestamp(git["project"], git["repo"], git["sha"])
             if not commit_ts:
                 continue
 
-            build_ts = build_detail["timestamp"]
+            build_ts = detail["timestamp"]
+            lt = (build_ts - commit_ts) / 1000 / 3600
 
-            lead_time = (build_ts - commit_ts) / 1000 / 3600
-
-            # 🔥 FILTRO PARA VALORES ABSURDOS
-            if 0 < lead_time <= MAX_LEAD_TIME_HOURS:
-                lead_times.append(lead_time)
+            if 0 < lt <= MAX_LEAD_TIME_HOURS:
+                times.append(lt)
 
         except Exception as e:
-            print(f"⚠️ Error en build {b.get('number')} ({job_url}): {e}")
+            print(f"⚠️ LeadTime error build {b['number']}: {e}")
 
-    if not lead_times:
-        return 0
-
-    return round(sum(lead_times) / len(lead_times), 2)
+    return round(sum(times) / len(times), 2) if times else 0
 
 
 # =========================================================
 # 🔧 MTTR
 # =========================================================
 def calculate_mttr(builds):
-    builds_sorted = sorted(builds, key=lambda x: x["timestamp"])
+    builds = sorted(builds, key=lambda x: x["timestamp"])
 
-    mttr_times = []
-    failure_time = None
+    mttr = []
+    fail_time = None
 
-    for b in builds_sorted:
-        if b.get("result") != "SUCCESS":
-            if failure_time is None:
-                failure_time = b["timestamp"]
+    for b in builds:
+        if b["result"] != "SUCCESS":
+            if fail_time is None:
+                fail_time = b["timestamp"]
 
-        elif b.get("result") == "SUCCESS" and failure_time:
-            recovery_time = b["timestamp"]
-            mttr_times.append(recovery_time - failure_time)
-            failure_time = None
+        elif fail_time:
+            mttr.append(b["timestamp"] - fail_time)
+            fail_time = None
 
-    if not mttr_times:
-        return 0
-
-    return round(sum(mttr_times) / len(mttr_times) / 1000 / 3600, 2)
+    return round(sum(mttr) / len(mttr) / 1000 / 3600, 2) if mttr else 0
 
 
 # =========================================================
-# 📊 MÉTRICAS
+# 🚀 MAIN LOGIC
 # =========================================================
-def calculate_metrics_for_view(view: str):
-    print(f"\n🔍 Procesando {view}...")
+def main():
 
-    jobs = get_jobs_from_view(view)
+    root_url = f"{JENKINS_URL}/{ROOT_VIEW}/job/{ROOT_FOLDER}"
+
+    print(f"\n🔍 Procesando estructura centralizada...\n")
+
+    all_jobs = get_all_jobs_recursive(root_url)
+
+    # 🔥 SOLO MASTER
+    prod_jobs = [j for j in all_jobs if is_master_job(j)]
+
+    print(f"🎯 Jobs de producción encontrados: {len(prod_jobs)}")
 
     all_builds = []
-    all_lead_times = []
+    lead_times = []
 
-    for job in jobs:
+    for job in prod_jobs:
         try:
-            builds = fetch_all_builds(job)
+            builds = fetch_builds(job)
 
             builds = [
                 b for b in builds
@@ -240,62 +211,31 @@ def calculate_metrics_for_view(view: str):
 
             lt = calculate_lead_time(builds, job)
             if lt > 0:
-                all_lead_times.append(lt)
+                lead_times.append(lt)
 
         except Exception as e:
-            print(f"⚠️ Error en {job}: {e}")
+            print(f"⚠️ Error job {job}: {e}")
 
-    success = [b for b in all_builds if b.get("result") == "SUCCESS"]
-    failed = [b for b in all_builds if b.get("result") != "SUCCESS"]
+    success = [b for b in all_builds if b["result"] == "SUCCESS"]
+    failed = [b for b in all_builds if b["result"] != "SUCCESS"]
 
-    deploys_per_day = {}
-    for b in success:
-        d = dt.datetime.fromtimestamp(b["timestamp"] / 1000).strftime("%Y-%m-%d")
-        deploys_per_day[d] = deploys_per_day.get(d, 0) + 1
-
+    failure_rate = (len(failed) / len(all_builds) * 100) if all_builds else 0
     mttr = calculate_mttr(all_builds)
-
-    lead_time_final = round(sum(all_lead_times) / len(all_lead_times), 2) if all_lead_times else 0
-
-    metrics = {
-        "view": view,
-        "total_jobs": len(jobs),
-        "total_builds": len(all_builds),
-        "deployments": len(success),
-        "failure_rate": (len(failed) / len(all_builds) * 100) if all_builds else 0,
-        "mttr_hours": mttr,
-        "lead_time_hours": lead_time_final,
-        "deploys_per_day": deploys_per_day
-    }
+    lead_time = round(sum(lead_times) / len(lead_times), 2) if lead_times else 0
 
     # =====================================================
-    # 📊 DASHBOARD LOG
+    # 📊 DASHBOARD FINAL
     # =====================================================
     print(f"""
-📊 ===== {view} =====
-Jobs: {metrics['total_jobs']}
-Builds: {metrics['total_builds']}
-Deployments: {metrics['deployments']}
-Failure Rate: {metrics['failure_rate']:.2f}%
-MTTR (hrs): {metrics['mttr_hours']}
-Lead Time (hrs): {metrics['lead_time_hours']}
-========================
+📊 ===== DEVOPS LAM (PRODUCCIÓN REAL) =====
+Jobs (master): {len(prod_jobs)}
+Builds: {len(all_builds)}
+Deployments: {len(success)}
+Failure Rate: {failure_rate:.2f}%
+MTTR (hrs): {mttr}
+Lead Time (hrs): {lead_time}
+===========================================
 """)
-
-    return metrics
-
-
-# =========================================================
-# 🚀 MAIN
-# =========================================================
-def main():
-    for view in COUNTRY_FOLDERS:
-        try:
-            calculate_metrics_for_view(view)
-        except Exception as e:
-            print(f"❌ Error en {view}: {e}")
-
-    print("\n✅ Ejecución finalizada.")
 
 
 if __name__ == "__main__":
