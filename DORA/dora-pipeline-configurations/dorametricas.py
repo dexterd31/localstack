@@ -2,7 +2,13 @@ import json
 import datetime as dt
 import requests
 import re
+import urllib3
 from requests.auth import HTTPBasicAuth
+
+# =========================================================
+# 🔇 OCULTAR WARNINGS SSL
+# =========================================================
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # =========================================================
 # 🔧 CONFIG
@@ -15,6 +21,7 @@ BITBUCKET_URL = "https://devops-latam-assurance.is.echonet/git"
 BITBUCKET_TOKEN = "TU_TOKEN_BITBUCKET"
 
 DAYS_BACK = 30
+MAX_LEAD_TIME_HOURS = 720  # 🔥 máximo 30 días (evita valores absurdos)
 
 COUNTRY_FOLDERS = [
     "view/Chile",
@@ -46,7 +53,7 @@ AUTH = HTTPBasicAuth(JENKINS_USER, JENKINS_API_TOKEN)
 # =========================================================
 def get_view_jobs(view: str):
     url = f"{JENKINS_URL}/{view}/api/json?tree=jobs[name,url,_class]"
-    r = requests.get(url, auth=AUTH, proxies=PROXY)
+    r = requests.get(url, auth=AUTH, proxies=PROXY, verify=False)
     r.raise_for_status()
     return r.json().get("jobs", [])
 
@@ -54,7 +61,7 @@ def get_view_jobs(view: str):
 def get_all_jobs(job_url: str):
     jobs = []
     url = f"{job_url}/api/json?tree=jobs[name,url,_class]"
-    r = requests.get(url, auth=AUTH, proxies=PROXY)
+    r = requests.get(url, auth=AUTH, proxies=PROXY, verify=False)
     r.raise_for_status()
 
     for item in r.json().get("jobs", []):
@@ -78,7 +85,7 @@ def get_jobs_from_view(view: str):
 
 def fetch_all_builds(job_url: str):
     url = f"{job_url}/api/json?tree=builds[number,result,timestamp]"
-    r = requests.get(url, auth=AUTH, proxies=PROXY)
+    r = requests.get(url, auth=AUTH, proxies=PROXY, verify=False)
     r.raise_for_status()
     return r.json().get("builds", [])
 
@@ -148,7 +155,7 @@ def calculate_lead_time(builds, job_url):
             build_number = b["number"]
             build_url = f"{job_url}/{build_number}/api/json"
 
-            r = requests.get(build_url, auth=AUTH, proxies=PROXY)
+            r = requests.get(build_url, auth=AUTH, proxies=PROXY, verify=False)
             r.raise_for_status()
 
             build_detail = r.json()
@@ -170,10 +177,13 @@ def calculate_lead_time(builds, job_url):
             build_ts = build_detail["timestamp"]
 
             lead_time = (build_ts - commit_ts) / 1000 / 3600
-            lead_times.append(lead_time)
+
+            # 🔥 FILTRO PARA VALORES ABSURDOS
+            if 0 < lead_time <= MAX_LEAD_TIME_HOURS:
+                lead_times.append(lead_time)
 
         except Exception as e:
-            print(f"⚠️ Error en build {b.get('number')}: {e}")
+            print(f"⚠️ Error en build {b.get('number')} ({job_url}): {e}")
 
     if not lead_times:
         return 0
@@ -258,7 +268,9 @@ def calculate_metrics_for_view(view: str):
         "deploys_per_day": deploys_per_day
     }
 
-    # 🔥 DASHBOARD LOG
+    # =====================================================
+    # 📊 DASHBOARD LOG
+    # =====================================================
     print(f"""
 📊 ===== {view} =====
 Jobs: {metrics['total_jobs']}
@@ -287,4 +299,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()  
+    main()
