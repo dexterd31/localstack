@@ -27,8 +27,6 @@ MAX_LEAD_TIME_HOURS = 720
 ROOT_VIEW = "view/Devops LAM"
 ROOT_FOLDER = "Centralized_DevOps_LAM"
 
-COUNTRIES = ["colombia", "chile", "brasil", "mexico", "peru", "latam", "devops"]
-
 # =========================================================
 # 🌐 PROXY
 # =========================================================
@@ -272,7 +270,6 @@ def main():
 
         failure_rate = (len(failed) / len(builds) * 100) if builds else 0
 
-        # 🔥 MTTR usando los jobs reales de master por país
         mttr_values = []
         for job in data["jobs"]:
             job_builds = fetch_builds(job)
@@ -301,9 +298,6 @@ def main():
             "failure_rate": round(failure_rate, 2)
         })
 
-    # =====================================================
-    # REGIONAL
-    # =====================================================
     def avg(key):
         vals = [c[key] for c in countries_output if c[key] > 0]
         return round(sum(vals) / len(vals), 2) if vals else 0
@@ -315,9 +309,6 @@ def main():
         "failure_rate": {"value": avg("failure_rate"), "trend": {"direction": "down", "percent": 0}}
     }
 
-    # =====================================================
-    # PERFORMANCE DISTRIBUTION
-    # =====================================================
     levels = {"Élite": 0, "Alto": 0, "Medio": 0, "Bajo": 0}
 
     for lt in all_lead_days:
@@ -329,9 +320,6 @@ def main():
         "values": [levels["Élite"], levels["Alto"], levels["Medio"], levels["Bajo"]]
     }
 
-    # =====================================================
-    # EVOLUTION (mock inicial)
-    # =====================================================
     evolution = {
         "months": ["Jan", "Feb", "Mar", "Apr", "May", "Jun"],
         "deployment_frequency": [3, 3.2, 3.5, 3.8, 3.6, 3.9],
@@ -339,9 +327,6 @@ def main():
         "failure_rate": [3.0, 2.8, 2.6, 2.4, 2.2, 2.0]
     }
 
-    # =====================================================
-    # FINAL JSON
-    # =====================================================
     dora_data = {
         "regional": regional,
         "countries": countries_output,
