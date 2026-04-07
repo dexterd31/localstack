@@ -87,6 +87,58 @@ def fetch_builds(job_url):
 
 
 # =========================================================
+# 📊 TOTAL DEPLOYMENTS GLOBAL
+# =========================================================
+def count_total_deployments(all_jobs):
+    total = 0
+    for job in all_jobs:
+        try:
+            builds = fetch_builds(job)
+            total += len(builds)
+        except:
+            continue
+    return total
+
+
+# =========================================================
+# 📊 DEPLOYMENTS POR PAIS Y PIPELINE
+# =========================================================
+def count_pipeline_executions_by_country(all_jobs):
+    data = defaultdict(lambda: {
+        "dev": 0,
+        "qa": 0,
+        "master": 0,
+        "securitygate": 0
+    })
+
+    for job in all_jobs:
+        try:
+            country = extract_country(job)
+            job_lower = job.lower()
+
+            pipeline_type = None
+            if "/dev" in job_lower:
+                pipeline_type = "dev"
+            elif "/qa" in job_lower:
+                pipeline_type = "qa"
+            elif "/master" in job_lower:
+                pipeline_type = "master"
+            elif "securitygate" in job_lower:
+                pipeline_type = "securitygate"
+
+            if not pipeline_type:
+                continue
+
+            builds = fetch_builds(job)
+            data[country][pipeline_type] += len(builds)
+
+        except:
+            continue
+
+    return data
+
+
+# =========================================================
 # 🧠 GIT INFO
 # =========================================================
 def extract_git_info(build_json):
@@ -159,7 +211,7 @@ def calculate_lead_time(builds, job_url):
 
 
 # =========================================================
-# 🔧 MTTR (POR COMMIT EN MASTER)
+# 🔧 MTTR
 # =========================================================
 def calculate_mttr(builds, job_url):
     commit_map = {}
@@ -209,7 +261,7 @@ def calculate_mttr(builds, job_url):
 
 
 # =========================================================
-# 🎯 PERFORMANCE DISTRIBUTION
+# 🎯 PERFORMANCE
 # =========================================================
 def classify_performance(days):
     if days < 1:
@@ -231,6 +283,9 @@ def main():
 
     all_jobs = get_all_jobs_recursive(root_url)
     prod_jobs = [j for j in all_jobs if is_master_job(j)]
+
+    total_deployments_global = count_total_deployments(all_jobs)
+    pipeline_counts = count_pipeline_executions_by_country(all_jobs)
 
     country_data = defaultdict(lambda: {
         "builds": [],
@@ -292,6 +347,12 @@ def main():
 
         countries_output.append({
             "name": country,
+            "pipeline_executions": pipeline_counts.get(country, {
+                "dev": 0,
+                "qa": 0,
+                "master": 0,
+                "securitygate": 0
+            }),
             "deployment_frequency": deployments_per_week,
             "lead_time": lead_time_days,
             "mttr": mttr,
@@ -328,6 +389,8 @@ def main():
     }
 
     dora_data = {
+        "generated_at": dt.datetime.now().isoformat(),
+        "total_deployments": total_deployments_global,
         "regional": regional,
         "countries": countries_output,
         "evolution": evolution,
