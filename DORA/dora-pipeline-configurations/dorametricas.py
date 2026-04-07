@@ -103,7 +103,7 @@ def count_total_deployments(all_jobs):
 
 
 # =========================================================
-# 📊 DEPLOYMENTS POR PAIS Y PIPELINE (NUEVO)
+# 📊 DEPLOYMENTS POR PAIS Y PIPELINE
 # =========================================================
 def count_pipeline_executions_by_country(all_jobs):
     data = defaultdict(lambda: {
@@ -116,8 +116,6 @@ def count_pipeline_executions_by_country(all_jobs):
     for job in all_jobs:
         try:
             country = extract_country(job)
-
-            # 👇 detectar pipeline real
             pipeline_name = job.strip("/").split("/")[-1].lower()
 
             if pipeline_name not in ["dev", "qa", "master", "securitygate"]:
@@ -205,51 +203,32 @@ def calculate_lead_time(builds, job_url):
 
 
 # =========================================================
-# 🔧 MTTR (POR COMMIT EN MASTER)
+# 🔧 MTTR (NUEVO MODELO POR INCIDENTES)
 # =========================================================
 def calculate_mttr(builds, job_url):
-    commit_map = {}
+    if not builds:
+        return 0
 
-    for b in builds:
-        try:
-            url = f"{job_url}/{b['number']}/api/json"
-            r = requests.get(url, auth=AUTH, proxies=PROXY, verify=False)
-            r.raise_for_status()
-
-            detail = r.json()
-            git = extract_git_info(detail)
-
-            if not git:
-                continue
-
-            sha = git["sha"]
-
-            if sha not in commit_map:
-                commit_map[sha] = []
-
-            commit_map[sha].append({
-                "timestamp": detail["timestamp"],
-                "result": detail["result"]
-            })
-
-        except:
-            continue
+    # ordenar por tiempo
+    builds_sorted = sorted(builds, key=lambda x: x["timestamp"])
 
     mttr_list = []
+    incident_start = None
 
-    for sha, build_list in commit_map.items():
-        build_list = sorted(build_list, key=lambda x: x["timestamp"])
+    for b in builds_sorted:
+        result = b.get("result")
+        ts = b.get("timestamp")
 
-        fail_time = None
+        # detectar inicio de incidente
+        if result != "SUCCESS":
+            if incident_start is None:
+                incident_start = ts
 
-        for b in build_list:
-            if b["result"] != "SUCCESS":
-                if fail_time is None:
-                    fail_time = b["timestamp"]
-            elif fail_time:
-                mttr = b["timestamp"] - fail_time
-                mttr_list.append(mttr)
-                break
+        # detectar recuperación
+        elif result == "SUCCESS" and incident_start is not None:
+            mttr = ts - incident_start
+            mttr_list.append(mttr)
+            incident_start = None  # reset para siguiente incidente
 
     return round(sum(mttr_list) / len(mttr_list) / 1000 / 3600, 2) if mttr_list else 0
 
@@ -279,8 +258,6 @@ def main():
     prod_jobs = [j for j in all_jobs if is_master_job(j)]
 
     total_deployments_global = count_total_deployments(all_jobs)
-
-    # 🔥 NUEVO
     pipeline_counts = count_pipeline_executions_by_country(all_jobs)
 
     country_data = defaultdict(lambda: {
