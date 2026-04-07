@@ -68,9 +68,13 @@ def is_master_job(job_url):
 
 
 def extract_country(job_url):
-    for c in COUNTRIES:
-        if f"/{c}/" in job_url.lower():
-            return c.capitalize()
+    try:
+        parts = job_url.split("/job/")
+        for i, part in enumerate(parts):
+            if ROOT_FOLDER in part:
+                return parts[i + 1].split("/")[0]
+    except:
+        pass
     return "Unknown"
 
 
@@ -157,7 +161,7 @@ def calculate_lead_time(builds, job_url):
 
 
 # =========================================================
-# 🔧 MTTR (NUEVO - POR COMMIT)
+# 🔧 MTTR (POR COMMIT EN MASTER)
 # =========================================================
 def calculate_mttr(builds, job_url):
     commit_map = {}
@@ -189,12 +193,12 @@ def calculate_mttr(builds, job_url):
 
     mttr_list = []
 
-    for sha, builds in commit_map.items():
-        builds = sorted(builds, key=lambda x: x["timestamp"])
+    for sha, build_list in commit_map.items():
+        build_list = sorted(build_list, key=lambda x: x["timestamp"])
 
         fail_time = None
 
-        for b in builds:
+        for b in build_list:
             if b["result"] != "SUCCESS":
                 if fail_time is None:
                     fail_time = b["timestamp"]
@@ -232,7 +236,8 @@ def main():
 
     country_data = defaultdict(lambda: {
         "builds": [],
-        "lead_times": []
+        "lead_times": [],
+        "jobs": []
     })
 
     for job in prod_jobs:
@@ -247,6 +252,7 @@ def main():
             ]
 
             country_data[country]["builds"].extend(builds)
+            country_data[country]["jobs"].append(job)
 
             lt = calculate_lead_time(builds, job)
             if lt > 0:
@@ -265,7 +271,20 @@ def main():
         failed = [b for b in builds if b["result"] != "SUCCESS"]
 
         failure_rate = (len(failed) / len(builds) * 100) if builds else 0
-        mttr = calculate_mttr(builds, prod_jobs[0])  # usa job_url para resolver builds
+
+        # 🔥 MTTR usando los jobs reales de master por país
+        mttr_values = []
+        for job in data["jobs"]:
+            job_builds = fetch_builds(job)
+            job_builds = [
+                b for b in job_builds
+                if (dt.datetime.now() - dt.datetime.fromtimestamp(b["timestamp"] / 1000)).days <= DAYS_BACK
+            ]
+            mttr_val = calculate_mttr(job_builds, job)
+            if mttr_val > 0:
+                mttr_values.append(mttr_val)
+
+        mttr = round(sum(mttr_values) / len(mttr_values), 2) if mttr_values else 0
 
         lead_time_hours = round(sum(data["lead_times"]) / len(data["lead_times"]), 2) if data["lead_times"] else 0
         lead_time_days = round(lead_time_hours / 24, 2)
