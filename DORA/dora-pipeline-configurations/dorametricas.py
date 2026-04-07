@@ -6,14 +6,8 @@ import urllib3
 from collections import defaultdict
 from requests.auth import HTTPBasicAuth
 
-# =========================================================
-# 🔇 OCULTAR WARNINGS SSL
-# =========================================================
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# =========================================================
-# 🔧 CONFIG
-# =========================================================
 JENKINS_URL = "https://alm-latam-assurance.dev.echonet/jenkins"
 JENKINS_USER = "j13399"
 JENKINS_API_TOKEN = "TU_TOKEN_JENKINS"
@@ -27,9 +21,6 @@ MAX_LEAD_TIME_HOURS = 720
 ROOT_VIEW = "view/Devops LAM"
 ROOT_FOLDER = "Centralized_DevOps_LAM"
 
-# =========================================================
-# 🌐 PROXY
-# =========================================================
 PROXY = {
     "http": "http://172.17.89.1:8080",
     "https": "http://172.17.89.1:8080",
@@ -39,7 +30,7 @@ PROXY = {k: v for k, v in PROXY.items() if v}
 AUTH = HTTPBasicAuth(JENKINS_USER, JENKINS_API_TOKEN)
 
 # =========================================================
-# 📡 JENKINS NAV
+# JENKINS NAV
 # =========================================================
 def get_jobs(url):
     api = f"{url}/api/json?tree=jobs[name,url,_class]"
@@ -59,10 +50,10 @@ def get_all_jobs_recursive(url):
 
 
 # =========================================================
-# 🎯 FILTROS
+# FILTROS
 # =========================================================
 def is_master_job(job_url):
-    return "/master" in job_url.lower()
+    return job_url.strip("/").split("/")[-1].lower() == "master"
 
 
 def extract_country(job_url):
@@ -77,7 +68,7 @@ def extract_country(job_url):
 
 
 # =========================================================
-# 📦 BUILDS
+# BUILDS
 # =========================================================
 def fetch_builds(job_url):
     url = f"{job_url}/api/json?tree=builds[number,result,timestamp]"
@@ -87,21 +78,7 @@ def fetch_builds(job_url):
 
 
 # =========================================================
-# 📊 TOTAL DEPLOYMENTS GLOBAL
-# =========================================================
-def count_total_deployments(all_jobs):
-    total = 0
-    for job in all_jobs:
-        try:
-            builds = fetch_builds(job)
-            total += len(builds)
-        except:
-            continue
-    return total
-
-
-# =========================================================
-# 📊 DEPLOYMENTS POR PAIS Y PIPELINE
+# 🔥 NUEVA FUNCION CORREGIDA
 # =========================================================
 def count_pipeline_executions_by_country(all_jobs):
     data = defaultdict(lambda: {
@@ -114,23 +91,15 @@ def count_pipeline_executions_by_country(all_jobs):
     for job in all_jobs:
         try:
             country = extract_country(job)
-            job_lower = job.lower()
 
-            pipeline_type = None
-            if "/dev" in job_lower:
-                pipeline_type = "dev"
-            elif "/qa" in job_lower:
-                pipeline_type = "qa"
-            elif "/master" in job_lower:
-                pipeline_type = "master"
-            elif "securitygate" in job_lower:
-                pipeline_type = "securitygate"
+            # 👇 pipeline REAL (último segmento)
+            pipeline_name = job.strip("/").split("/")[-1].lower()
 
-            if not pipeline_type:
+            if pipeline_name not in ["dev", "qa", "master", "securitygate"]:
                 continue
 
             builds = fetch_builds(job)
-            data[country][pipeline_type] += len(builds)
+            data[country][pipeline_name] += len(builds)
 
         except:
             continue
@@ -139,7 +108,7 @@ def count_pipeline_executions_by_country(all_jobs):
 
 
 # =========================================================
-# 🧠 GIT INFO
+# GIT
 # =========================================================
 def extract_git_info(build_json):
     for action in build_json.get("actions", []):
@@ -158,9 +127,6 @@ def extract_git_info(build_json):
     return None
 
 
-# =========================================================
-# 🌐 BITBUCKET
-# =========================================================
 def get_commit_timestamp(project, repo, sha):
     url = f"{BITBUCKET_URL}/rest/api/latest/projects/{project}/repos/{repo}/commits/{sha}"
     headers = {"Authorization": f"Bearer {BITBUCKET_TOKEN}"}
@@ -174,7 +140,7 @@ def get_commit_timestamp(project, repo, sha):
 
 
 # =========================================================
-# ⏱️ LEAD TIME
+# LEAD TIME
 # =========================================================
 def calculate_lead_time(builds, job_url):
     times = []
@@ -211,7 +177,7 @@ def calculate_lead_time(builds, job_url):
 
 
 # =========================================================
-# 🔧 MTTR
+# MTTR
 # =========================================================
 def calculate_mttr(builds, job_url):
     commit_map = {}
@@ -261,21 +227,7 @@ def calculate_mttr(builds, job_url):
 
 
 # =========================================================
-# 🎯 PERFORMANCE
-# =========================================================
-def classify_performance(days):
-    if days < 1:
-        return "Élite"
-    elif days < 7:
-        return "Alto"
-    elif days < 30:
-        return "Medio"
-    else:
-        return "Bajo"
-
-
-# =========================================================
-# 🚀 MAIN
+# MAIN
 # =========================================================
 def main():
 
@@ -284,7 +236,6 @@ def main():
     all_jobs = get_all_jobs_recursive(root_url)
     prod_jobs = [j for j in all_jobs if is_master_job(j)]
 
-    total_deployments_global = count_total_deployments(all_jobs)
     pipeline_counts = count_pipeline_executions_by_country(all_jobs)
 
     country_data = defaultdict(lambda: {
@@ -315,7 +266,6 @@ def main():
             continue
 
     countries_output = []
-    all_lead_days = []
 
     for country, data in country_data.items():
         builds = data["builds"]
@@ -328,10 +278,6 @@ def main():
         mttr_values = []
         for job in data["jobs"]:
             job_builds = fetch_builds(job)
-            job_builds = [
-                b for b in job_builds
-                if (dt.datetime.now() - dt.datetime.fromtimestamp(b["timestamp"] / 1000)).days <= DAYS_BACK
-            ]
             mttr_val = calculate_mttr(job_builds, job)
             if mttr_val > 0:
                 mttr_values.append(mttr_val)
@@ -340,8 +286,6 @@ def main():
 
         lead_time_hours = round(sum(data["lead_times"]) / len(data["lead_times"]), 2) if data["lead_times"] else 0
         lead_time_days = round(lead_time_hours / 24, 2)
-
-        all_lead_days.append(lead_time_days)
 
         deployments_per_week = round(len(success) / (DAYS_BACK / 7), 2)
 
@@ -359,42 +303,9 @@ def main():
             "failure_rate": round(failure_rate, 2)
         })
 
-    def avg(key):
-        vals = [c[key] for c in countries_output if c[key] > 0]
-        return round(sum(vals) / len(vals), 2) if vals else 0
-
-    regional = {
-        "deployment_frequency": {"value": avg("deployment_frequency"), "trend": {"direction": "up", "percent": 0}},
-        "lead_time": {"value": avg("lead_time"), "trend": {"direction": "down", "percent": 0}},
-        "mttr": {"value": avg("mttr"), "trend": {"direction": "down", "percent": 0}},
-        "failure_rate": {"value": avg("failure_rate"), "trend": {"direction": "down", "percent": 0}}
-    }
-
-    levels = {"Élite": 0, "Alto": 0, "Medio": 0, "Bajo": 0}
-
-    for lt in all_lead_days:
-        level = classify_performance(lt)
-        levels[level] += 1
-
-    performance_distribution = {
-        "labels": ["Élite", "Alto", "Medio", "Bajo"],
-        "values": [levels["Élite"], levels["Alto"], levels["Medio"], levels["Bajo"]]
-    }
-
-    evolution = {
-        "months": ["Jan", "Feb", "Mar", "Apr", "May", "Jun"],
-        "deployment_frequency": [3, 3.2, 3.5, 3.8, 3.6, 3.9],
-        "lead_time": [2.5, 2.3, 2.2, 2.1, 2.0, 1.9],
-        "failure_rate": [3.0, 2.8, 2.6, 2.4, 2.2, 2.0]
-    }
-
     dora_data = {
         "generated_at": dt.datetime.now().isoformat(),
-        "total_deployments": total_deployments_global,
-        "regional": regional,
-        "countries": countries_output,
-        "evolution": evolution,
-        "performance_distribution": performance_distribution
+        "countries": countries_output
     }
 
     with open("dora-summary.json", "w") as f:
