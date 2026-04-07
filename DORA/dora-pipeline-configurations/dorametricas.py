@@ -157,23 +157,53 @@ def calculate_lead_time(builds, job_url):
 
 
 # =========================================================
-# 🔧 MTTR
+# 🔧 MTTR (NUEVO - POR COMMIT)
 # =========================================================
-def calculate_mttr(builds):
-    builds = sorted(builds, key=lambda x: x["timestamp"])
-
-    mttr = []
-    fail_time = None
+def calculate_mttr(builds, job_url):
+    commit_map = {}
 
     for b in builds:
-        if b["result"] != "SUCCESS":
-            if fail_time is None:
-                fail_time = b["timestamp"]
-        elif fail_time:
-            mttr.append(b["timestamp"] - fail_time)
-            fail_time = None
+        try:
+            url = f"{job_url}/{b['number']}/api/json"
+            r = requests.get(url, auth=AUTH, proxies=PROXY, verify=False)
+            r.raise_for_status()
 
-    return round(sum(mttr) / len(mttr) / 1000 / 3600, 2) if mttr else 0
+            detail = r.json()
+            git = extract_git_info(detail)
+
+            if not git:
+                continue
+
+            sha = git["sha"]
+
+            if sha not in commit_map:
+                commit_map[sha] = []
+
+            commit_map[sha].append({
+                "timestamp": detail["timestamp"],
+                "result": detail["result"]
+            })
+
+        except:
+            continue
+
+    mttr_list = []
+
+    for sha, builds in commit_map.items():
+        builds = sorted(builds, key=lambda x: x["timestamp"])
+
+        fail_time = None
+
+        for b in builds:
+            if b["result"] != "SUCCESS":
+                if fail_time is None:
+                    fail_time = b["timestamp"]
+            elif fail_time:
+                mttr = b["timestamp"] - fail_time
+                mttr_list.append(mttr)
+                break
+
+    return round(sum(mttr_list) / len(mttr_list) / 1000 / 3600, 2) if mttr_list else 0
 
 
 # =========================================================
@@ -235,7 +265,7 @@ def main():
         failed = [b for b in builds if b["result"] != "SUCCESS"]
 
         failure_rate = (len(failed) / len(builds) * 100) if builds else 0
-        mttr = calculate_mttr(builds)
+        mttr = calculate_mttr(builds, prod_jobs[0])  # usa job_url para resolver builds
 
         lead_time_hours = round(sum(data["lead_times"]) / len(data["lead_times"]), 2) if data["lead_times"] else 0
         lead_time_days = round(lead_time_hours / 24, 2)
